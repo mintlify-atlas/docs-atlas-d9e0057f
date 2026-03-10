@@ -1,0 +1,452 @@
+---
+title: 'WhatsApp Bot Integration'
+description: 'Automate customer interactions and business operations via WhatsApp'
+icon: 'whatsapp'
+---
+
+## Overview
+
+The WhatsApp Bot integration enables automated customer service, order taking, reservation management, and bulk messaging through WhatsApp. Built on BuilderBot Cloud API, it provides real-time communication with customers and logs all interactions to Google Sheets.
+
+## Features
+
+- **QR Code Authentication**: Scan QR code to connect WhatsApp account
+- **Automated Status Tracking**: Real-time bot connection monitoring
+- **Message Handling**: Incoming and outgoing message support
+- **Order Creation**: Create orders directly through WhatsApp conversations
+- **Reservation Management**: Handle table reservations via WhatsApp
+- **Bulk Messaging**: Send messages to individual customers or groups
+- **Chat History**: Complete conversation logs synced to Google Sheets
+- **Metrics Tracking**: Customer engagement and conversion analytics
+
+## Setup and Configuration
+
+<Steps>
+  <Step title="Configure BuilderBot API Keys">
+    Add your BuilderBot credentials to the environment configuration:
+
+    ```typescript
+    const projectId = 'your-project-id';
+    const builderBotApiKey = 'bbc-xxxxx';
+    const builderBotV2ApiKey = 'bb-xxxxx';
+    ```
+
+    These values should be stored in environment variables for production.
+  </Step>
+
+  <Step title="Set up Google Sheets Webhook">
+    Deploy the WhatsApp Assistant script from `AppsSript/whatsappAsistant.js` as a web app:
+
+    1. Open Google Apps Script editor
+    2. Navigate to **Deploy** > **New Deployment**
+    3. Set type to **Web App**
+    4. Execute as: **Me**
+    5. Who has access: **Anyone**
+    6. Copy the deployment URL
+    7. Configure this URL as your BuilderBot webhook endpoint
+
+    <Note>
+      The webhook logs all events to the `WhastappAssistant_logs` sheet and tracks message history in `WhatsappsHistory`.
+    </Note>
+  </Step>
+
+  <Step title="Configure Google Sheet Structure">
+    Ensure your Google Sheet (ID: `1wBGA_7out-9eSonGZAM-cPt9VOPa5OxQCA3Low_fVUI`) has these sheets:
+
+    - **WhastappAssistant**: Bot status management
+    - **WhastappAssistant_logs**: Event logs
+    - **WhatsappsHistory**: Message history
+  </Step>
+
+  <Step title="Initialize the Bot Connection">
+    Use the bot service to initiate deployment:
+
+    ```typescript
+    import { initiateWhatsAppDeploy, getWhatsAppQR } from './services/whatsappBotService';
+
+    // Start bot deployment
+    await initiateWhatsAppDeploy();
+
+    // Get QR code for scanning
+    const qrCode = await getWhatsAppQR();
+    ```
+  </Step>
+</Steps>
+
+## Bot Status Management
+
+### Connection States
+
+The bot can be in one of three states:
+
+<CodeGroup>
+```typescript Bot Status Types
+export type BotApiStatus = 'READY_TO_SCAN' | 'ACTIVE' | 'DISCONNECTED';
+```
+
+```typescript Check Status
+import { getWhatsAppStatus } from './services/whatsappBotService';
+
+const status = await getWhatsAppStatus();
+// Returns: 'READY_TO_SCAN', 'ACTIVE', or 'DISCONNECTED'
+```
+</CodeGroup>
+
+### QR Code Scanning
+
+When the bot is in `READY_TO_SCAN` state, retrieve and display the QR code:
+
+```typescript services/whatsappBotService.ts:32
+export const getWhatsAppQR = async (): Promise<string> => {
+    const qrResponse = await fetch(`${DEPLOY_URL}/${projectId}/qr`, {
+        headers: { 'x-api-builderbot': builderBotApiKey },
+    });
+
+    const blob = await qrResponse.blob();
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+    });
+};
+```
+
+### Persisting Connection State
+
+The bot connection state is persisted in local storage:
+
+```typescript services/whatsappBotService.ts:120
+export const persistStatus = (status: 'active' | 'disconnected') => {
+    if (status === 'active') {
+        localStorage.setItem(WHATSAPP_STATUS_KEY, 'active');
+        if (!getPersistedConnectionTime()) {
+            localStorage.setItem(
+                WHATSAPP_CONNECTION_TIME_KEY,
+                new Date().toISOString()
+            );
+        }
+    } else {
+        localStorage.removeItem(WHATSAPP_STATUS_KEY);
+        localStorage.removeItem(WHATSAPP_CONNECTION_TIME_KEY);
+    }
+};
+```
+
+## Sending Messages
+
+### Send to Individual Customer
+
+```typescript services/whatsappBotService.ts:133
+import { sendWhatsAppMessage } from './services/whatsappBotService';
+
+const result = await sendWhatsAppMessage(
+    '1234567890',              // Phone number
+    'Hello! Your order is ready.',  // Message content
+    'https://example.com/image.jpg' // Optional media URL
+);
+
+if (result.success) {
+    console.log('Message sent successfully');
+} else {
+    console.error('Failed to send:', result.error);
+}
+```
+
+### Send to WhatsApp Group
+
+```typescript services/whatsappBotService.ts:184
+import { sendWhatsAppGroupMessage } from './services/whatsappBotService';
+
+const result = await sendWhatsAppGroupMessage(
+    'group-id-12345@g.us',    // Group ID
+    'Special promotion today!',  // Message
+    'https://example.com/promo.jpg' // Optional media
+);
+```
+
+<Warning>
+  Both functions return a result object with `success` and optional `error` fields. Always check the result before proceeding.
+</Warning>
+
+## Webhook Event Handling
+
+The Google Apps Script webhook processes these BuilderBot events:
+
+### Status Events
+
+<CodeGroup>
+```javascript status.ready
+// Bot is online and ready
+case 'status.ready':
+    updateBotStatus(
+        clientSpreadsheet,
+        projectId,
+        'active',
+        `Online since ${new Date(data.timestamp).toLocaleString()}`
+    );
+    break;
+```
+
+```javascript status.require_action
+// QR scan required
+case 'status.require_action':
+    updateBotStatus(
+        clientSpreadsheet,
+        projectId,
+        'pending_scan',
+        `Requires QR scan as of ${new Date().toLocaleString()}`
+    );
+    break;
+```
+
+```javascript status.disconnect
+// Bot disconnected
+case 'status.disconnect':
+    updateBotStatus(
+        clientSpreadsheet,
+        projectId,
+        'inactive',
+        `Disconnected: ${data.reason || 'Unknown reason'}`
+    );
+    break;
+```
+</CodeGroup>
+
+### Message Events
+
+```javascript AppsSript/whatsappAsistant.js:214
+function logMessageHistory(clientSpreadsheet, eventName, projectId, data) {
+    const messageId = data.id || 'N/A';
+    const direction = eventName.replace('message.', ''); // 'incoming' or 'outgoing'
+    const from = data.from || 'N/A';
+    const to = data.to || 'N/A';
+    const body = data.body || '';
+    const mediaUrl = (data.media && data.media.url) || data.mediaUrl || '';
+
+    historySheet.appendRow([
+        new Date().toISOString(),
+        messageId,
+        direction,
+        from,
+        to,
+        body.toString().substring(0, 5000),
+        mediaUrl,
+        JSON.stringify(data)
+    ]);
+}
+```
+
+Supported message events:
+- `message.incoming`: Customer sent a message
+- `message.outgoing`: Bot sent a message
+- `message.calling`: Incoming call notification
+
+## Manual Status Verification
+
+You can manually check bot status from Apps Script:
+
+```javascript AppsSript/whatsappAsistant.js:34
+function checkBotStatusManually() {
+    const url = `https://app.builderbot.cloud/api/v1/manager/deploys/${PROJECT_ID}`;
+    const options = {
+        method: 'get',
+        headers: { 'x-api-builderbot': BUILDERBOT_API_KEY },
+        muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch(url, options);
+    const responseCode = response.getResponseCode();
+
+    let newStatus = 'inactive';
+    if (responseCode === 200) {
+        const data = JSON.parse(response.getContentText());
+        const apiStatus = data.deploy && data.deploy.status;
+
+        if (apiStatus === 'ACTIVE' || apiStatus === 'ONLINE') {
+            newStatus = 'active';
+        } else if (apiStatus === 'READY_TO_SCAN') {
+            newStatus = 'pending_scan';
+        }
+    }
+
+    updateBotStatus(clientSpreadsheet, PROJECT_ID, newStatus, details);
+}
+```
+
+Run this function directly from the Apps Script editor for debugging.
+
+## Disconnecting the Bot
+
+```typescript services/whatsappBotService.ts:89
+import { disconnectWhatsAppBot } from './services/whatsappBotService';
+
+try {
+    await disconnectWhatsAppBot();
+    persistStatus('disconnected');
+    console.log('Bot disconnected successfully');
+} catch (error) {
+    console.error('Failed to disconnect:', error);
+}
+```
+
+## Metrics and Analytics
+
+Track bot performance with the metrics service:
+
+```typescript services/whatsappBotMetricsService.ts:61
+import {
+    fetchAndCacheWhatsAppBotData,
+    getMetrics,
+    getChatHistory
+} from './services/whatsappBotMetricsService';
+
+// Fetch latest data from Google Sheets
+await fetchAndCacheWhatsAppBotData();
+
+// Get metrics
+const metrics = getMetrics();
+console.log(metrics);
+// {
+//   distinctCustomers: 150,
+//   totalMessages: 1247,
+//   ordersMade: 45,
+//   reservationsMade: 23
+// }
+
+// Get chat history
+const chatHistory = getChatHistory();
+// Returns up to 100 most recent chat sessions
+```
+
+### Chat Session Structure
+
+```typescript
+interface ChatHistorySession {
+    id: string;              // Customer phone number
+    startTime: string;       // ISO timestamp
+    messages: ChatMessage[]; // Conversation messages
+    outcome: 'order' | 'reservation' | null;
+    tokensUsed: number;      // Not applicable for WhatsApp (always 0)
+    lastActivity: string;    // ISO timestamp
+}
+
+interface ChatMessage {
+    sender: 'USER' | 'BOT';
+    text: string;
+}
+```
+
+## Order and Reservation Creation
+
+Orders and reservations created via WhatsApp are marked with `createdBy: 'whatsapp_assistant'`:
+
+```typescript
+import { CreatedBy } from './types';
+
+const order = {
+    id: 'ORD-123',
+    customer: { phone: '1234567890', name: 'John Doe' },
+    items: [...],
+    total: 25.99,
+    createdBy: CreatedBy.WHATSAPP_ASSISTANT,
+    // ... other fields
+};
+```
+
+This allows filtering and analytics specifically for WhatsApp-generated business:
+
+```typescript services/whatsappBotMetricsService.ts:76
+const ordersMade = orders.filter(
+    o => o.createdBy === CreatedBy.WHATSAPP_ASSISTANT
+).length;
+
+const reservationsMade = reservations.filter(
+    r => r.createdBy === CreatedBy.WHATSAPP_ASSISTANT
+).length;
+```
+
+## Status Logging
+
+All status changes are logged for auditing:
+
+```typescript services/whatsappBotService.ts:234
+export const logStatusChange = async (
+    status: string,
+    details: string
+): Promise<void> => {
+    const logEntry = {
+        timestamp: new Date().toISOString(),
+        eventName: 'status.change.frontend',
+        projectId: projectId,
+        from: 'Frontend Panel',
+        details: details,
+        rawPayload: JSON.stringify({ status, details }),
+        unhandledStatus: '',
+        botStatus: status
+    };
+
+    await addDoc(collection(db, 'WhastappAssistant_logs'), logEntry);
+};
+```
+
+<Note>
+  Status logs are stored in both Firestore and Google Sheets for redundancy and easy access.
+</Note>
+
+## API Endpoints
+
+The integration uses these BuilderBot Cloud API endpoints:
+
+| Endpoint | Method | Purpose |
+|----------|--------|----------|
+| `/api/v1/manager/deploys` | POST | Initiate bot deployment |
+| `/api/v1/manager/deploys/{projectId}/qr` | GET | Retrieve QR code |
+| `/api/v1/manager/deploys/{projectId}` | GET | Check bot status |
+| `/api/v1/manager/deploys/{projectId}` | DELETE | Disconnect bot |
+| `/api/v2/{projectId}/messages` | POST | Send messages |
+
+All requests require the `x-api-builderbot` header with your API key.
+
+## Troubleshooting
+
+### QR Code Not Loading
+
+- Verify the bot is in `READY_TO_SCAN` state
+- Check that `builderBotApiKey` is correct
+- Ensure the project is properly deployed on BuilderBot Cloud
+
+### Messages Not Sending
+
+- Confirm bot status is `ACTIVE`
+- Verify `builderBotV2ApiKey` (different from v1 key)
+- Check phone number format (no spaces, include country code)
+- Review error messages in the response object
+
+### Webhook Not Receiving Events
+
+- Verify Google Apps Script web app is deployed with "Anyone" access
+- Check that the webhook URL is correctly configured in BuilderBot
+- Review Apps Script logs for errors
+- Ensure `SHEET_ID` matches your Google Sheet
+
+### Bot Status Shows Disconnected
+
+- The bot disconnects after 24 hours of inactivity
+- Scan the QR code again to reconnect
+- Check if WhatsApp account was logged out on mobile device
+
+## Best Practices
+
+1. **Monitor Connection Status**: Poll `getWhatsAppStatus()` periodically to detect disconnections
+2. **Handle Errors Gracefully**: Always check message send results and retry if needed
+3. **Rate Limiting**: Avoid sending too many messages in quick succession
+4. **Message Length**: Keep messages under 4096 characters
+5. **Media URLs**: Ensure media URLs are publicly accessible and use HTTPS
+6. **Backup Credentials**: Store API keys securely in environment variables
+7. **Log Analysis**: Regularly review `WhastappAssistant_logs` for issues
+
+## Related Documentation
+
+- [Google Sheets Integration](/integrations/google-sheets)
+- [Firebase Setup](/integrations/firebase)
+- [API Reference](/api/overview)

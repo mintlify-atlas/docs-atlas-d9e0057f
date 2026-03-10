@@ -1,0 +1,589 @@
+---
+title: 'Customer Management'
+description: 'Customer database with categories, bulk messaging via WhatsApp, and CSV import/export'
+icon: 'users'
+---
+
+## Overview
+
+The Customer Management system maintains a database of all customers with categorization, contact information, and integration with WhatsApp bulk messaging. It provides tools for customer segmentation, data import/export, and targeted communications.
+
+### Key Benefits
+
+- **Centralized Database**: Store all customer contact information and history
+- **Customer Categories**: Segment customers (VIP, Regular, New) with custom categories
+- **Bulk WhatsApp Messaging**: Send promotions to specific customer segments
+- **CSV Import/Export**: Easily import existing customer lists or export for analysis
+- **Automatic Creation**: New customers auto-created from orders and reservations
+- **Duplicate Prevention**: System prevents duplicate phone/email entries
+
+## Customer Data Structure
+
+### Customer Interface
+
+From `types.ts:183-191`:
+
+```typescript
+export interface Customer {
+  id: string;           // Format: CUST-{timestamp}-{random}
+  name: string;
+  phone?: string;       // Validated format
+  email?: string;       // Validated format
+  address?: string;
+  categoryId: string;   // Reference to CustomerCategory.id
+  createdAt: string;   // ISO timestamp
+}
+```
+
+### Customer Category Interface
+
+From `types.ts:193-197`:
+
+```typescript
+export interface CustomerCategory {
+  id: string;      // Format: CUSTCAT-{timestamp}-{random}
+  name: string;    // Display name (e.g., "VIP", "Regular")
+  color: string;   // Hex color for visual grouping
+}
+```
+
+## Default Categories
+
+From `services/customerCategoryService.ts:15-19`:
+
+```typescript
+const initialCategories = [
+  { name: 'Nuevo', color: '#4CAF50' },      // Green - new customers
+  { name: 'Regular', color: '#2196F3' },    // Blue - repeat customers
+  { name: 'VIP', color: '#FFC107' },        // Gold - VIP customers
+];
+```
+
+<Note>
+**"Nuevo" Category is Protected**:
+
+The "Nuevo" category cannot be deleted as it's the default for new customers. You can rename it or change its color, but deletion is blocked by the system.
+</Note>
+
+## Core Service Functions
+
+### Managing Customers
+
+From `services/customerService.ts`:
+
+#### Creating Customers
+
+```typescript
+addCustomer(
+  customerData: Omit<Customer, 'id' | 'createdAt'>
+): Promise<Customer>
+```
+
+**Example**:
+
+```typescript
+import { addCustomer } from './services/customerService';
+import { getCustomerCategoriesFromCache } from './services/customerCategoryService';
+
+const vipCategory = getCustomerCategoriesFromCache().find(c => c.name === 'VIP');
+
+const newCustomer = await addCustomer({
+  name: 'Ana Martínez',
+  phone: '1145678901',
+  email: 'ana@example.com',
+  address: 'Av. Corrientes 1234',
+  categoryId: vipCategory!.id
+});
+
+console.log(newCustomer.id);  // "CUST-1710087654321-abc5d"
+```
+
+**Validation Rules**:
+
+<Warning>
+**Duplicate Prevention**:
+
+- System checks for existing customers with same phone OR email
+- Throws error if duplicate found
+- Comparison is case-insensitive for emails
+- Phone comparison is exact match
+</Warning>
+
+**Auto-Category Assignment** (from `customerService.ts:71-78`):
+
+```typescript
+// If no categoryId provided, use default "Nuevo" category
+const defaultCategory = getDefaultNewCustomerCategory();
+const categoryId = customerData.categoryId || defaultCategory!.id;
+```
+
+#### Updating Customers
+
+```typescript
+updateCustomer(updatedCustomer: Customer): Promise<Customer>
+```
+
+**Example**:
+
+```typescript
+import { updateCustomer, getCustomersFromCache } from './services/customerService';
+
+const customers = getCustomersFromCache();
+const ana = customers.find(c => c.name === 'Ana Martínez');
+
+if (ana) {
+  // Promote to VIP
+  const vipCategory = getCustomerCategoriesFromCache().find(c => c.name === 'VIP');
+  
+  await updateCustomer({
+    ...ana,
+    categoryId: vipCategory!.id,
+    address: 'Nueva dirección 456'  // Update address too
+  });
+}
+```
+
+<Warning>
+**Update Validation**:
+
+- Checks for duplicate phone/email (excluding current customer)
+- Throws error if trying to use another customer's phone/email
+</Warning>
+
+#### Deleting Customers
+
+```typescript
+deleteCustomer(customerId: string): Promise<void>
+```
+
+### Managing Customer Categories
+
+From `services/customerCategoryService.ts`:
+
+```typescript
+// Add category
+addCustomerCategory(
+  categoryData: Omit<CustomerCategory, 'id'>
+): Promise<CustomerCategory>
+
+// Update category
+updateCustomerCategory(
+  updatedCategory: CustomerCategory
+): Promise<CustomerCategory>
+
+// Delete category (reassigns customers to "Nuevo")
+deleteCustomerCategory(categoryId: string): Promise<void>
+
+// Get all categories
+getCustomerCategoriesFromCache(): CustomerCategory[]
+
+// Get default category for new customers
+getDefaultNewCustomerCategory(): CustomerCategory | undefined
+```
+
+**Example**:
+
+```typescript
+import { addCustomerCategory } from './services/customerCategoryService';
+
+const corporateCategory = await addCustomerCategory({
+  name: 'Corporativo',
+  color: '#9C27B0'  // Purple
+});
+```
+
+**Category Deletion** (from `customerCategoryService.ts:115-129`):
+
+When deleting a category:
+1. System reassigns all customers in that category to "Nuevo"
+2. Updates Firebase in batch
+3. Updates local cache
+4. Prevents deletion of "Nuevo" category
+
+## Bulk Import/Export
+
+### CSV Import
+
+From `services/customerService.ts:156-202`:
+
+```typescript
+importCustomers(
+  customersToImport: any[]
+): Promise<{ added: number; updated: number; errors: number }>
+```
+
+**CSV Structure**:
+
+```csv
+name,phone,email,address,categoryName
+Juan Pérez,1123456789,juan@example.com,Calle 123,VIP
+María González,1198765432,maria@example.com,Av. 456,Regular
+```
+
+**Import Logic**:
+
+<Steps>
+  <Step title="Validate Fields">
+    Each row must have:
+    - `name` (required)
+    - `phone` (required, must be 10+ digits)
+    - `email` (required, valid format)
+    - `categoryName` (must exist or defaults to "Nuevo")
+  </Step>
+  
+  <Step title="Match Existing Customers">
+    Checks if customer with same phone or email exists.
+  </Step>
+  
+  <Step title="Update or Add">
+    - If exists: updates existing customer data
+    - If new: creates new customer
+  </Step>
+  
+  <Step title="Batch Write">
+    All changes written to Firebase in single batch for performance.
+  </Step>
+  
+  <Step title="Return Statistics">
+    Returns count of:
+    - `added`: New customers created
+    - `updated`: Existing customers updated
+    - `errors`: Rows with validation failures
+  </Step>
+</Steps>
+
+**Example**:
+
+```typescript
+import { importCustomers } from './services/customerService';
+
+const csvData = [
+  {
+    name: 'Juan Pérez',
+    phone: '1123456789',
+    email: 'juan@example.com',
+    address: 'Calle 123',
+    categoryName: 'VIP'
+  },
+  // ... more rows
+];
+
+const result = await importCustomers(csvData);
+
+console.log(`Added: ${result.added}`);
+console.log(`Updated: ${result.updated}`);
+console.log(`Errors: ${result.errors}`);
+```
+
+**Validation Rules**:
+
+```typescript
+// Phone validation
+if (!/^\d{10,}$/.test(phone.replace(/\D/g, ''))) {
+  errors++;
+  continue;
+}
+
+// Email validation
+if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  errors++;
+  continue;
+}
+```
+
+## WhatsApp Bulk Messaging
+
+From `services/whatsappBotService.ts` and `components/admin/CustomersPanel.tsx`:
+
+### Sending Messages to Customers
+
+```typescript
+sendWhatsAppMessage(
+  number: string,
+  content: string,
+  mediaUrl?: string
+): Promise<{ success: boolean; error?: string }>
+```
+
+**Example - Single Customer**:
+
+```typescript
+import { sendWhatsAppMessage } from './services/whatsappBotService';
+
+const result = await sendWhatsAppMessage(
+  '1145678901',
+  '¡Hola Ana! Tenemos una promoción especial para clientes VIP: 20% de descuento en pizzas este fin de semana.',
+  'https://example.com/promo.jpg'  // Optional image
+);
+
+if (result.success) {
+  console.log('Message sent!');
+} else {
+  console.error(`Failed: ${result.error}`);
+}
+```
+
+### Bulk Send
+
+From `components/admin/CustomersPanel.tsx`:
+
+The admin panel provides bulk messaging UI:
+
+**User Workflow**:
+
+<Steps>
+  <Step title="Navigate to Customers Panel">
+    Click "Clientes" in admin sidebar.
+  </Step>
+  
+  <Step title="Filter by Category (Optional)">
+    Select category (e.g., "VIP") to send targeted messages.
+  </Step>
+  
+  <Step title="Click 'Envío Masivo'">
+    Opens bulk messaging modal.
+  </Step>
+  
+  <Step title="Compose Message">
+    - Enter message text
+    - Optionally add image URL
+    - Preview shows recipient count
+  </Step>
+  
+  <Step title="Send to All or Selected">
+    Choose:
+    - All customers in current filter
+    - Manually selected customers (checkbox)
+  </Step>
+  
+  <Step title="Monitor Progress">
+    System shows:
+    - Total to send
+    - Sent count (updates in real-time)
+    - Failed count
+    - Progress percentage
+  </Step>
+</Steps>
+
+**Bulk Send Job Tracking** (from `types.ts:258-265`):
+
+```typescript
+export interface BulkSendJob {
+  status: 'running' | 'completed' | 'cancelled' | 'error' | 'idle';
+  total: number;       // Total messages to send
+  sent: number;        // Successfully sent
+  failed: number;      // Failed attempts
+  startTime: number;   // Timestamp
+  isCancelled: boolean;
+}
+```
+
+<Warning>
+**WhatsApp Bot Must Be Active**:
+
+Bulk messaging requires WhatsApp bot to be connected (status: 'active'). The UI disables messaging features when bot is disconnected.
+</Warning>
+
+## User Workflows
+
+### Adding a Customer Manually
+
+<Steps>
+  <Step title="Navigate to Customers Panel">
+    Click "Clientes" in the admin sidebar.
+  </Step>
+  
+  <Step title="Click 'Nuevo Cliente'">
+    Opens customer creation form.
+  </Step>
+  
+  <Step title="Fill Customer Details">
+    - **Name** (required)
+    - **Phone** (optional but required for WhatsApp)
+    - **Email** (optional)
+    - **Address** (optional, useful for delivery history)
+    - **Category** (defaults to "Nuevo")
+  </Step>
+  
+  <Step title="Submit">
+    System:
+    - Validates phone and email format
+    - Checks for duplicates
+    - Creates customer with auto-generated ID
+    - Syncs to Firebase
+  </Step>
+</Steps>
+
+### Importing Customer List
+
+<Steps>
+  <Step title="Prepare CSV File">
+    Create CSV with columns: `name`, `phone`, `email`, `address`, `categoryName`
+    
+    Ensure:
+    - Phone numbers have 10+ digits
+    - Emails are valid format
+    - Category names match existing categories (or blank for "Nuevo")
+  </Step>
+  
+  <Step title="Open Import Tool">
+    In CustomersPanel, click "Importar CSV" button.
+  </Step>
+  
+  <Step title="Upload File">
+    Select CSV file from computer.
+  </Step>
+  
+  <Step title="Review Results">
+    System displays:
+    - Customers added (new)
+    - Customers updated (duplicates)
+    - Errors (validation failures)
+  </Step>
+  
+  <Step title="Verify in Customer List">
+    Check that customers appear with correct categories and contact info.
+  </Step>
+</Steps>
+
+### Sending Promotional Message to VIP Customers
+
+<Steps>
+  <Step title="Ensure WhatsApp Bot is Active">
+    Check bot status in "Bots" panel. If disconnected, connect first.
+  </Step>
+  
+  <Step title="Filter VIP Customers">
+    In CustomersPanel, select "VIP" category filter.
+  </Step>
+  
+  <Step title="Open Bulk Messaging">
+    Click "Envío Masivo WhatsApp" button.
+  </Step>
+  
+  <Step title="Compose Message">
+    ```
+    ¡Hola! Como cliente VIP, te ofrecemos 25% de descuento
+    en todas nuestras pizzas este viernes y sábado.
+    
+    Usa el código: VIP25
+    
+    ¡Te esperamos!
+    ```
+    
+    Optionally add promotional image URL.
+  </Step>
+  
+  <Step title="Send to All VIP">
+    Click "Enviar a Todos" (or select specific customers).
+  </Step>
+  
+  <Step title="Monitor Progress">
+    Watch real-time progress:
+    - Total: 150 customers
+    - Sent: 145
+    - Failed: 5 (invalid numbers)
+  </Step>
+</Steps>
+
+## Automatic Customer Creation
+
+Customers are auto-created from orders and reservations when they don't exist:
+
+**From Orders** (when using AI assistants):
+```typescript
+// AI creates order with customer data
+const order = await saveOrder({
+  customer: {
+    name: 'Nuevo Cliente',
+    phone: '1199887766',
+    address: 'Calle Nueva 789'
+  },
+  // ... order details
+});
+
+// System can later extract this to create customer record:
+await addCustomer({
+  name: order.customer.name,
+  phone: order.customer.phone,
+  address: order.customer.address,
+  categoryId: getDefaultNewCustomerCategory()!.id
+});
+```
+
+**From Reservations**:
+```typescript
+// Reservation created with customer info
+const reservation = await addReservation({
+  customerName: 'Carlos Ruiz',
+  customerPhone: '1166554433',
+  // ...
+});
+
+// Later, add to customer database:
+await addCustomer({
+  name: reservation.customerName,
+  phone: reservation.customerPhone,
+  categoryId: getDefaultNewCustomerCategory()!.id
+});
+```
+
+## Real-Time Synchronization
+
+From `components/AdminDashboard.tsx:112-113`:
+
+```typescript
+const unsubCustomers = onSnapshot(
+  collection(db, 'Customers'),
+  (querySnapshot) => {
+    const customers = querySnapshot.docs.map(doc => doc.data() as Customer);
+    updateCustomersCache(customers);
+    setDataTimestamp(Date.now());
+  }
+);
+
+const unsubCustomerCategories = onSnapshot(
+  collection(db, 'CustomerCategories'),
+  (querySnapshot) => {
+    const categories = querySnapshot.docs.map(doc => doc.data() as CustomerCategory);
+    updateCustomerCategoriesCache(categories);
+  }
+);
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Categorize Strategically" icon="tags">
+    Use categories to segment customers by:
+    - Purchase frequency (New, Regular, VIP)
+    - Order value (Economy, Standard, Premium)
+    - Location (Local, Tourist)
+  </Card>
+  
+  <Card title="Keep Contact Info Updated" icon="address-card">
+    Encourage customers to provide both phone and email for multi-channel communication.
+  </Card>
+  
+  <Card title="Import Periodically" icon="file-import">
+    If you have customer data in other systems (POS, CRM), import regularly to keep database current.
+  </Card>
+  
+  <Card title="Target Messages by Category" icon="bullseye">
+    Send VIP offers to VIP customers, re-engagement messages to lapsed customers, etc.
+  </Card>
+  
+  <Card title="Monitor Bulk Send Results" icon="chart-bar">
+    Check failed messages - they may indicate outdated phone numbers. Clean up database accordingly.
+  </Card>
+  
+  <Card title="Protect Customer Data" icon="shield">
+    Customer data is stored in Firebase. Ensure proper security rules and access controls.
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Orders](/features/orders) - Orders reference customer data
+- [Reservations](/features/reservations) - Reservations include customer contact info
+- [AI Assistants](/features/ai-assistants) - AI assistants can collect customer data during interactions

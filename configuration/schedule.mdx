@@ -1,0 +1,437 @@
+---
+title: 'Schedule Management'
+description: 'Configure business hours, weekly schedules, time slots, and schedule exceptions for holidays and special events'
+---
+
+## Overview
+
+The schedule management system controls when your business is open for orders and reservations. It supports weekly schedules with multiple time slots per day, plus exceptions for holidays and special hours.
+
+## Core Interfaces
+
+### Schedule Structure
+
+```typescript types.ts
+export interface TimeSlot {
+  open: string;
+  close: string;
+}
+
+export interface DaySchedule {
+  isOpen: boolean;
+  slots: TimeSlot[];
+}
+
+export interface Schedule {
+  [day: string]: DaySchedule;
+}
+```
+
+### Schedule Exceptions
+
+```typescript types.ts
+export enum ExceptionType {
+  CLOSED = 'Cerrado',
+  SPECIAL_HOURS = 'Horario Especial',
+}
+
+export interface ScheduleException {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  type: ExceptionType;
+  slots?: TimeSlot[];
+}
+```
+
+## Configuration Parameters
+
+### TimeSlot
+
+<ParamField path="open" type="string" required>
+  Opening time in 24-hour format (HH:mm)
+  
+  Example: `"18:00"`
+</ParamField>
+
+<ParamField path="close" type="string" required>
+  Closing time in 24-hour format (HH:mm)
+  
+  Times after midnight are supported (e.g., `"23:59"` for close to midnight).
+  
+  Example: `"23:00"`
+  
+  <Note>
+    If close time is earlier than or equal to open time, it's interpreted as next day (e.g., open: "22:00", close: "02:00" means 22:00 to 2:00 AM next day).
+  </Note>
+</ParamField>
+
+### DaySchedule
+
+<ParamField path="isOpen" type="boolean" required>
+  Whether the business is open on this day
+  
+  When `false`, the `slots` array is ignored.
+</ParamField>
+
+<ParamField path="slots" type="TimeSlot[]" required>
+  Array of time slots when the business is open
+  
+  Multiple slots support split shifts (e.g., lunch and dinner service).
+  
+  Example:
+  ```typescript
+  {
+    isOpen: true,
+    slots: [
+      { open: "11:00", close: "14:00" }, // Lunch
+      { open: "18:00", close: "23:00" }  // Dinner
+    ]
+  }
+  ```
+</ParamField>
+
+### ScheduleException
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the exception
+  
+  Generated automatically: `EXC-{timestamp}-{random}`
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Descriptive name for the exception
+  
+  Example: `"Christmas Day"`, `"New Year's Eve Special Hours"`
+</ParamField>
+
+<ParamField path="startDate" type="string" required>
+  Start date in ISO format (YYYY-MM-DD)
+  
+  Example: `"2026-12-25"`
+</ParamField>
+
+<ParamField path="endDate" type="string" required>
+  End date in ISO format (YYYY-MM-DD)
+  
+  For single-day exceptions, set equal to `startDate`.
+  
+  Example: `"2026-12-25"`
+</ParamField>
+
+<ParamField path="type" type="ExceptionType" required>
+  Type of exception
+  
+  - `CLOSED`: Business is closed during this period
+  - `SPECIAL_HOURS`: Business operates on special hours (requires `slots`)
+</ParamField>
+
+<ParamField path="slots" type="TimeSlot[]" optional>
+  Time slots for special hours (required when type is `SPECIAL_HOURS`)
+  
+  Example:
+  ```typescript
+  {
+    type: ExceptionType.SPECIAL_HOURS,
+    slots: [{ open: "10:00", close: "15:00" }]
+  }
+  ```
+</ParamField>
+
+## Default Schedule
+
+The system initializes with a default weekly schedule:
+
+```typescript scheduleService.ts
+const initialSchedule: Schedule = {
+  monday:    { isOpen: true, slots: [{ open: '18:00', close: '23:00' }] },
+  tuesday:   { isOpen: false, slots: [{ open: '18:00', close: '23:00' }] },
+  wednesday: { isOpen: true, slots: [{ open: '18:00', close: '23:00' }] },
+  thursday:  { isOpen: true, slots: [{ open: '18:00', close: '23:00' }] },
+  friday:    { isOpen: true, slots: [{ open: '18:00', close: '23:59' }] },
+  saturday:  { isOpen: true, slots: [{ open: '11:00', close: '23:59' }] },
+  sunday:    { isOpen: true, slots: [{ open: '11:00', close: '23:00' }] },
+};
+```
+
+## Managing Schedules
+
+### Retrieving the Current Schedule
+
+Get the cached schedule (synchronous):
+
+```typescript
+import { getScheduleFromCache } from './services/scheduleService';
+
+const schedule = getScheduleFromCache();
+console.log('Monday hours:', schedule.monday);
+```
+
+Fetch and cache from Firestore:
+
+```typescript
+import { fetchAndCacheSchedule } from './services/scheduleService';
+
+const schedule = await fetchAndCacheSchedule();
+console.log('Updated schedule:', schedule);
+```
+
+### Updating the Schedule
+
+Save a new schedule to Firestore and cache:
+
+```typescript
+import { saveSchedule } from './services/scheduleService';
+import type { Schedule } from './types';
+
+const newSchedule: Schedule = {
+  monday: { 
+    isOpen: true, 
+    slots: [
+      { open: '11:00', close: '14:00' },
+      { open: '17:00', close: '22:00' }
+    ]
+  },
+  tuesday: { isOpen: false, slots: [] },
+  // ... other days
+};
+
+try {
+  await saveSchedule(newSchedule);
+  console.log('Schedule updated successfully');
+} catch (error) {
+  console.error('Failed to save schedule:', error);
+}
+```
+
+<Note>
+  The schedule is saved optimistically - local cache is updated first, then Firestore. If Firestore save fails, the local cache remains updated.
+</Note>
+
+## Managing Schedule Exceptions
+
+### Retrieving Exceptions
+
+Get cached exceptions:
+
+```typescript
+import { getScheduleExceptionsFromCache } from './services/scheduleExceptionService';
+
+const exceptions = getScheduleExceptionsFromCache();
+console.log('Active exceptions:', exceptions);
+```
+
+Fetch from Firestore:
+
+```typescript
+import { fetchAndCacheScheduleExceptions } from './services/scheduleExceptionService';
+
+const exceptions = await fetchAndCacheScheduleExceptions();
+```
+
+### Adding an Exception
+
+Create a new schedule exception:
+
+```typescript
+import { addScheduleException } from './services/scheduleExceptionService';
+import { ExceptionType } from './types';
+
+// Closed for holiday
+const christmasException = await addScheduleException({
+  name: 'Christmas Day',
+  startDate: '2026-12-25',
+  endDate: '2026-12-25',
+  type: ExceptionType.CLOSED
+});
+
+// Special hours for New Year's Eve
+const newYearException = await addScheduleException({
+  name: "New Year's Eve",
+  startDate: '2026-12-31',
+  endDate: '2026-12-31',
+  type: ExceptionType.SPECIAL_HOURS,
+  slots: [{ open: '17:00', close: '01:00' }]
+});
+
+console.log('Exception created:', christmasException.id);
+```
+
+### Updating an Exception
+
+Modify an existing exception:
+
+```typescript
+import { updateScheduleException } from './services/scheduleExceptionService';
+import type { ScheduleException } from './types';
+
+const updatedException: ScheduleException = {
+  id: 'EXC-1234567890-abc123',
+  name: 'Christmas Week',
+  startDate: '2026-12-24',
+  endDate: '2026-12-26',
+  type: ExceptionType.SPECIAL_HOURS,
+  slots: [{ open: '10:00', close: '17:00' }]
+};
+
+await updateScheduleException(updatedException);
+```
+
+### Deleting an Exception
+
+Remove a schedule exception:
+
+```typescript
+import { deleteScheduleException } from './services/scheduleExceptionService';
+
+await deleteScheduleException('EXC-1234567890-abc123');
+console.log('Exception deleted');
+```
+
+## Checking Business Status
+
+Determine if the business is currently open:
+
+```typescript
+import { isBusinessOpen } from './services/scheduleService';
+
+if (isBusinessOpen()) {
+  console.log('Business is open - accepting orders');
+} else {
+  console.log('Business is closed');
+}
+```
+
+### How `isBusinessOpen()` Works
+
+The function checks in order:
+
+1. **Schedule Exceptions**: Checks if today falls within any exception date range
+   - If `CLOSED` exception: returns `false`
+   - If `SPECIAL_HOURS` exception: checks current time against exception slots
+
+2. **Regular Schedule**: Checks today's day-of-week schedule
+   - Verifies current time is within any of the day's time slots
+
+3. **Overnight Slots**: Checks if current time falls within yesterday's slots that extend past midnight
+
+```typescript scheduleService.ts
+export const isBusinessOpen = (): boolean => {
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    
+    const exceptions = getScheduleExceptionsFromCache();
+    const todayException = exceptions.find(ex => 
+      todayStr >= ex.startDate && todayStr <= ex.endDate
+    );
+
+    if (todayException) {
+        if (todayException.type === ExceptionType.CLOSED) return false;
+        if (todayException.type === ExceptionType.SPECIAL_HOURS && todayException.slots) {
+            // Check exception slots...
+        }
+    }
+
+    // Check regular schedule...
+};
+```
+
+## Storage Details
+
+### Firestore Collections
+
+**Schedule:**
+```
+Collection: Schedule
+Document ID: main
+```
+
+**Exceptions:**
+```
+Collection: ScheduleExceptions
+Document ID: {auto-generated exception ID}
+```
+
+### Local Storage Keys
+
+```typescript
+const SCHEDULE_STORAGE_KEY = 'pizzeria-schedule';
+const EXCEPTIONS_STORAGE_KEY = 'pizzeria-schedule-exceptions';
+```
+
+## Migration Support
+
+The schedule service includes automatic migration from old single-slot format to multi-slot format:
+
+```typescript scheduleService.ts
+const migrateSchedule = (oldSchedule: any): Schedule => {
+    const newSchedule: Schedule = {} as Schedule;
+    for (const day in initialSchedule) {
+        if (oldSchedule[day].hasOwnProperty('open') && oldSchedule[day].hasOwnProperty('close')) {
+            // Migrate from { open, close } to { slots: [{ open, close }] }
+            newSchedule[day] = { 
+              isOpen: oldSchedule[day].isOpen, 
+              slots: [{ open: oldSchedule[day].open, close: oldSchedule[day].close }] 
+            };
+        } else {
+            newSchedule[day] = oldSchedule[day];
+        }
+    }
+    return newSchedule;
+};
+```
+
+## Best Practices
+
+<Accordion title="Use Multiple Slots for Split Shifts">
+  If your business has separate lunch and dinner service:
+  
+  ```typescript
+  {
+    isOpen: true,
+    slots: [
+      { open: "11:00", close: "15:00" },
+      { open: "18:00", close: "23:00" }
+    ]
+  }
+  ```
+</Accordion>
+
+<Accordion title="Plan Exceptions in Advance">
+  Create exceptions for known holidays and events well ahead of time to prevent customer confusion.
+  
+  ```typescript
+  // Create all major holidays at year start
+  const holidays2026 = [
+    { name: 'New Year', date: '2026-01-01' },
+    { name: 'Independence Day', date: '2026-07-04' },
+    { name: 'Christmas', date: '2026-12-25' },
+  ];
+  
+  for (const holiday of holidays2026) {
+    await addScheduleException({
+      name: holiday.name,
+      startDate: holiday.date,
+      endDate: holiday.date,
+      type: ExceptionType.CLOSED
+    });
+  }
+  ```
+</Accordion>
+
+<Accordion title="Handle Overnight Hours Correctly">
+  For hours spanning midnight, the system automatically handles day transitions:
+  
+  ```typescript
+  // Friday night into Saturday morning
+  friday: { 
+    isOpen: true, 
+    slots: [{ open: "18:00", close: "02:00" }] // Closes at 2 AM Saturday
+  }
+  ```
+</Accordion>
+
+<Warning>
+  Exception dates use ISO format (YYYY-MM-DD). Ensure date strings are properly formatted to avoid timezone issues.
+</Warning>

@@ -1,0 +1,589 @@
+---
+title: 'Google Sheets Integration'
+description: 'Sync and manage business data with Google Sheets using Apps Script'
+icon: 'table'
+---
+
+## Overview
+
+The Google Sheets integration provides a robust backend data store for Ai Studio, enabling real-time synchronization of customers, orders, reservations, products, and other business data. Using Google Apps Script, it exposes a RESTful API for CRUD operations without requiring a traditional database.
+
+## Features
+
+- **Two-Way Sync**: Bidirectional data synchronization between frontend and Google Sheets
+- **RESTful API**: Web app endpoints for GET and POST operations
+- **CRUD Operations**: Create, read, update, and delete data
+- **Authentication**: Secret key-based security
+- **Automatic Type Conversion**: JSON parsing and proper data typing
+- **Schedule Management**: Special handling for business hours
+- **Multi-Sheet Support**: Separate sheets for different data types
+
+## Sheet Structure
+
+Your Google Sheet should contain these sheets:
+
+| Sheet Name | Purpose | Key Fields |
+|------------|---------|------------|
+| **Customers** | Customer information | id, name, phone, email, address, categoryId |
+| **Orders** | Order tracking | id, customer, items, total, status, type, createdAt |
+| **Reservations** | Table reservations | id, customerName, customerPhone, guests, reservationTime, tableIds, status |
+| **Tables** | Table configuration | id, name, capacity, allowsReservations |
+| **Schedule** | Business hours | day, isOpen, slots |
+| **Products** | Menu items | id, category, name, description, price, imageUrl |
+| **Promotions** | Active promotions | id, name, items, price, isActive |
+| **Categories** | Product categories | id, name, imageUrl, color |
+| **CustomerCategories** | Customer segmentation | id, name, color |
+| **ReservationSettings** | Reservation rules | duration, minBookingTime, slotInterval |
+| **SliceBotMetrics** | AI bot metrics | distinctCustomers, totalMessages, ordersMade |
+| **ChatHistory** | AI conversations | id, startTime, messages, outcome, tokensUsed |
+| **ScheduleExceptions** | Holiday hours | id, name, startDate, endDate, type, slots |
+| **WhatsappsHistory** | WhatsApp messages | timestamp, messageId, direction, from, to, body |
+| **WhastappAssistant_logs** | WhatsApp events | timestamp, eventName, projectId, details |
+
+## Setup Instructions
+
+<Steps>
+  <Step title="Create Google Sheet">
+    1. Create a new Google Sheet
+    2. Note the Sheet ID from the URL: `https://docs.google.com/spreadsheets/d/[SHEET_ID]/edit`
+    3. The sheets will be auto-created when data is first synced
+  </Step>
+
+  <Step title="Deploy ScriptBD.js">
+    This script handles main data CRUD operations:
+
+    1. Open Google Apps Script editor from your sheet (**Extensions** > **Apps Script**)
+    2. Create a new script file named `ScriptBD.gs`
+    3. Copy contents from `AppsSript/ScriptBD.js`
+    4. Update configuration:
+
+    ```javascript
+    const SECRET_KEY = "your-secret-key-here";
+    ```
+
+    5. Deploy as Web App:
+       - Click **Deploy** > **New Deployment**
+       - Type: **Web App**
+       - Execute as: **Me**
+       - Who has access: **Anyone**
+    6. Copy the web app URL
+  </Step>
+
+  <Step title="Deploy BotWhatsappCRUD.js">
+    This script handles WhatsApp bot data operations:
+
+    1. Create another script file named `BotWhatsappCRUD.gs`
+    2. Copy contents from `AppsSript/BotWhatsappCRUD.js`
+    3. Update the sheet ID:
+
+    ```javascript
+    const SHEET_ID = "your-sheet-id";
+    ```
+
+    4. Deploy as a separate Web App following the same steps
+    5. Copy this web app URL as well
+  </Step>
+
+  <Step title="Configure Frontend">
+    Add your web app URLs to the API service configuration:
+
+    ```typescript
+    // In your environment or config file
+    const SHEETS_API_URL = 'https://script.google.com/macros/s/.../exec';
+    const WHATSAPP_SHEETS_API_URL = 'https://script.google.com/macros/s/.../exec';
+    const SECRET_KEY = 'your-secret-key-here';
+    ```
+  </Step>
+</Steps>
+
+## ScriptBD API
+
+The main data management script (`ScriptBD.js`) provides these operations:
+
+### GET Endpoints
+
+<CodeGroup>
+```javascript Test Connection
+// Verify sheet access
+GET ?secret=YOUR_KEY&action=testConnection&sheetId=SHEET_ID
+
+// Response:
+{
+  "status": "success",
+  "message": "Conexión exitosa. Acceso correcto a la hoja: 'Sheet Name'"
+}
+```
+
+```javascript Get All Data
+// Retrieve all rows from a sheet
+GET ?secret=YOUR_KEY&action=getAllData&sheetId=SHEET_ID&sheetName=Products
+
+// Response: Array of objects
+[
+  { "id": "PROD-123", "name": "Pizza", "price": 15.99, ... },
+  { "id": "PROD-124", "name": "Pasta", "price": 12.99, ... }
+]
+```
+</CodeGroup>
+
+### POST Endpoints
+
+<CodeGroup>
+```javascript Sync All Data
+// Complete data sync from frontend
+POST with JSON body:
+{
+  "secret": "YOUR_KEY",
+  "action": "syncAllData",
+  "sheetId": "SHEET_ID",
+  "payload": {
+    "products": [...],
+    "orders": [...],
+    "customers": [...],
+    "schedule": "{...}",
+    // ... other data types
+  }
+}
+```
+
+```javascript Add Single Item
+POST with JSON body:
+{
+  "secret": "YOUR_KEY",
+  "action": "addData",
+  "sheetId": "SHEET_ID",
+  "payload": {
+    "sheetName": "Products",
+    "item": {
+      "id": "PROD-125",
+      "name": "Salad",
+      "price": 8.99,
+      "category": "Appetizers"
+    }
+  }
+}
+```
+
+```javascript Update Item
+POST with JSON body:
+{
+  "secret": "YOUR_KEY",
+  "action": "updateData",
+  "sheetId": "SHEET_ID",
+  "payload": {
+    "sheetName": "Products",
+    "item": {
+      "id": "PROD-125",
+      "price": 9.99  // Updated fields
+    }
+  }
+}
+```
+
+```javascript Delete Item
+POST with JSON body:
+{
+  "secret": "YOUR_KEY",
+  "action": "deleteData",
+  "sheetId": "SHEET_ID",
+  "payload": {
+    "sheetName": "Products",
+    "itemId": "PROD-125"
+  }
+}
+```
+</CodeGroup>
+
+### Schedule Management
+
+Schedule data requires special handling:
+
+```javascript AppsSript/ScriptBD.js:99
+function handleSaveSchedule(spreadsheet, scheduleObject) {
+    const sheetName = 'Schedule';
+    const headers = ['day', 'isOpen', 'slots'];
+    
+    // Transform schedule object to array format
+    const scheduleArray = Object.keys(scheduleObject).map(day => {
+        const dayData = scheduleObject[day];
+        return {
+            day: day,
+            isOpen: dayData.isOpen,
+            slots: JSON.stringify(dayData.slots || [])
+        };
+    });
+
+    return syncSheet(spreadsheet, sheetName, scheduleArray, headers);
+}
+```
+
+Usage:
+
+```javascript
+POST {
+  "action": "saveSchedule",
+  "payload": {
+    "monday": { "isOpen": true, "slots": [{"start": "09:00", "end": "17:00"}] },
+    "tuesday": { "isOpen": true, "slots": [{"start": "09:00", "end": "17:00"}] },
+    // ... other days
+  }
+}
+```
+
+## BotWhatsappCRUD API
+
+The WhatsApp-specific script (`BotWhatsappCRUD.js`) handles bot-related operations:
+
+### Actions
+
+<CodeGroup>
+```javascript Get Customer & Business Status
+POST {
+  "action": "getCustomerAndBusinessStatus",
+  "phone": "1234567890"
+}
+
+// Returns complete business state:
+{
+  "customer": { /* customer object */ },
+  "schedule": { /* business hours */ },
+  "activeOrders": { /* orders by ID */ },
+  "activeReservations": { /* reservations by ID */ },
+  "tables": { /* tables by ID */ },
+  "products": { /* products by ID */ },
+  "activePromotions": { /* promotions by ID */ }
+}
+```
+
+```javascript Find Customer
+POST {
+  "action": "findCustomer",
+  "query": "1234567890",
+  "findBy": "phone"  // or "email", "name", etc.
+}
+
+// Returns customer object or null
+```
+
+```javascript Save Customer
+POST {
+  "action": "saveCustomer",
+  "phone": "1234567890",
+  "name": "John Doe",
+  "email": "john@example.com",
+  "address": "123 Main St"
+}
+
+// Auto-generates ID and createdAt
+```
+
+```javascript Create Order
+POST {
+  "action": "createOrder",
+  "customer": { "phone": "1234567890", "name": "John Doe" },
+  "items": [{"id": "PROD-1", "quantity": 2, "price": 15.99}],
+  "total": 31.98,
+  "type": "delivery"
+}
+```
+
+```javascript Create Reservation
+POST {
+  "action": "createReservation",
+  "customerName": "John Doe",
+  "customerPhone": "1234567890",
+  "guests": 4,
+  "reservationTime": "2026-03-15T19:00:00.000Z",
+  "tableIds": ["TBL-1", "TBL-2"]
+}
+```
+</CodeGroup>
+
+### Get Active Items
+
+```javascript AppsSript/BotWhatsappCRUD.js:272
+function getOrders(sheet) {
+    const { headers, data } = getSheetDataWithHeaders(sheet);
+    const statusIndex = headers.indexOf('status');
+    const finishedStatuses = [
+        'Completado (Retirado)',
+        'Completado (Entregado)',
+        'Completado (En Mesa)',
+        'Cancelado'
+    ];
+    
+    return data
+        .filter(row => !finishedStatuses.includes(row[statusIndex]))
+        .map(row => convertRowToObject(row, headers));
+}
+```
+
+Only returns orders/reservations with active status.
+
+## Data Type Conversion
+
+The scripts automatically convert data types:
+
+```javascript AppsSript/ScriptBD.js:154
+function sheetToJSON(sheet) {
+    const data = sheet.getDataRange().getValues();
+    const headers = data.shift();
+
+    return data.map(row => {
+        const obj = {};
+        headers.forEach((header, i) => {
+            let value = row[i];
+            
+            // Convert string booleans
+            if (typeof value === 'string') {
+                if (value.toLowerCase() === 'true') value = true;
+                else if (value.toLowerCase() === 'false') value = false;
+                
+                // Convert numbers
+                else if (!isNaN(value) && value.trim() !== '') {
+                    if (String(parseFloat(value)) === value) {
+                        value = parseFloat(value);
+                    }
+                }
+                
+                // Parse JSON objects/arrays
+                else if (
+                    (value.startsWith('{') && value.endsWith('}')) ||
+                    (value.startsWith('[') && value.endsWith(']'))
+                ) {
+                    try {
+                        value = JSON.parse(value);
+                    } catch (e) { /* Keep as string */ }
+                }
+            }
+            
+            obj[header] = value;
+        });
+        return obj;
+    });
+}
+```
+
+<Note>
+  Complex objects (arrays, nested objects) are stored as JSON strings and automatically parsed when retrieved.
+</Note>
+
+## Generic Update Function
+
+Both scripts use a generic update-by-ID function:
+
+```javascript AppsSript/BotWhatsappCRUD.js:390
+function updateRowById(sheet, payload) {
+    const { id, updates } = payload;
+    const { headers, data } = getSheetDataWithHeaders(sheet);
+    const idIndex = headers.indexOf('id');
+    
+    // Find row by ID
+    const rowIndexInData = data.findIndex(
+        row => String(row[idIndex]) === String(id)
+    );
+    
+    if (rowIndexInData === -1) {
+        throw new Error(`No se encontró un item con el ID: ${id}`);
+    }
+    
+    const sheetRowIndex = rowIndexInData + 2; // Account for header row
+    const updatedRowData = convertRowToObject(data[rowIndexInData], headers);
+    
+    // Merge updates
+    for (const key in updates) {
+        if (headers.includes(key)) {
+            updatedRowData[key] = updates[key];
+        }
+    }
+    
+    // Write back to sheet
+    const newRowValues = headers.map(header => {
+        let value = updatedRowData[header];
+        return (typeof value === 'object' && value !== null)
+            ? JSON.stringify(value)
+            : (value ?? '');
+    });
+    
+    sheet.getRange(sheetRowIndex, 1, 1, headers.length)
+         .setValues([newRowValues]);
+    
+    return updatedRowData;
+}
+```
+
+This allows partial updates:
+
+```javascript
+// Only update status field
+updateRowById(sheet, {
+    id: "ORD-123",
+    updates: { status: "En Preparación" }
+});
+```
+
+## Authentication
+
+All requests require the secret key:
+
+```javascript AppsSript/ScriptBD.js:125
+function authenticate(params) {
+    if (params.secret !== SECRET_KEY) {
+        throw new Error('Autenticación fallida: Clave secreta inválida.');
+    }
+}
+```
+
+<Warning>
+  Change the default `SECRET_KEY` value in both scripts to a strong, unique password before deploying.
+</Warning>
+
+## Error Handling
+
+Both scripts use standardized error responses:
+
+```javascript AppsSript/ScriptBD.js:134
+function createErrorResponse(error) {
+    Logger.log(error.stack);
+    return ContentService.createTextOutput(
+        JSON.stringify({
+            status: 'error',
+            message: error.message
+        })
+    ).setMimeType(ContentService.MimeType.JSON);
+}
+```
+
+All errors are logged to Apps Script logs (View > Logs) for debugging.
+
+## Auto-Creating Sheets
+
+Sheets are automatically created with headers when first accessed:
+
+```javascript AppsSript/ScriptBD.js:143
+function getOrCreateSheet(spreadsheet, name) {
+    let sheet = spreadsheet.getSheetByName(name);
+    if (!sheet) {
+        sheet = spreadsheet.insertSheet(name);
+    }
+    return sheet;
+}
+```
+
+## Sync Efficiency
+
+The `syncSheet` function efficiently updates entire sheets:
+
+```javascript AppsSript/ScriptBD.js:318
+function syncSheet(spreadsheet, sheetName, dataArray, headers) {
+    const sheet = getOrCreateSheet(spreadsheet, sheetName);
+    sheet.clear(); // Clear existing data
+    
+    // Prepare all rows at once
+    const rows = [headers];
+    dataArray.forEach(item => {
+        const row = headers.map(header => {
+            let value = item[header];
+            if (value === null || value === undefined) return '';
+            if (typeof value === 'object') return JSON.stringify(value);
+            return value;
+        });
+        rows.push(row);
+    });
+    
+    // Single batch write
+    sheet.getRange(1, 1, rows.length, headers.length).setValues(rows);
+    
+    return { status: 'success', written: dataArray.length };
+}
+```
+
+<Note>
+  Batch operations are much faster than row-by-row writes. Always use `setValues()` with a 2D array instead of multiple `appendRow()` calls.
+</Note>
+
+## Frontend Integration
+
+Typical usage from the frontend:
+
+```typescript services/apiService.ts
+const API_URL = 'https://script.google.com/macros/s/.../exec';
+const SECRET_KEY = 'your-secret-key';
+
+export const syncAllData = async (data: any) => {
+    const response = await fetch(API_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+            secret: SECRET_KEY,
+            action: 'syncAllData',
+            sheetId: SHEET_ID,
+            payload: data
+        })
+    });
+    return response.json();
+};
+
+export const getData = async (sheetName: string) => {
+    const params = new URLSearchParams({
+        secret: SECRET_KEY,
+        action: 'getAllData',
+        sheetId: SHEET_ID,
+        sheetName: sheetName
+    });
+    
+    const response = await fetch(`${API_URL}?${params}`);
+    return response.json();
+};
+```
+
+## Performance Considerations
+
+1. **Batch Operations**: Use `syncAllData` instead of multiple individual updates
+2. **Caching**: Cache sheet data in localStorage to reduce API calls
+3. **Quotas**: Apps Script has daily quotas; monitor usage in the Google Cloud Console
+4. **Execution Time**: Scripts timeout after 6 minutes; large syncs may need optimization
+5. **Concurrent Access**: Google Sheets handles concurrent writes, but race conditions can occur
+
+## Troubleshooting
+
+### "Permission Denied" Errors
+
+- Ensure web app is deployed with "Execute as: Me"
+- Set access to "Anyone" (web apps can't use "Anyone with the link")
+- Re-authorize the script if permissions were recently changed
+
+### Data Not Updating
+
+- Check that you're using the latest deployment URL (not a previous version)
+- Verify the `sheetId` matches your Google Sheet
+- Check Apps Script logs for errors
+- Ensure secret key matches in both script and frontend
+
+### Type Conversion Issues
+
+- IDs and phone numbers may be converted to numbers; store them as strings
+- Use consistent date formatting (ISO 8601 recommended)
+- Large numbers may lose precision; store as strings if needed
+
+### "Script function not found" Error
+
+- Ensure you saved the script after making changes
+- Create a new deployment (don't just redeploy existing one)
+- Check function names match exactly (case-sensitive)
+
+## Best Practices
+
+1. **Use Environment Variables**: Store URLs and keys securely
+2. **Handle Errors**: Always check response status and handle failures
+3. **Validate Data**: Verify data structure before sending to sheets
+4. **Version Control**: Keep script versions in sync with frontend expectations
+5. **Test Thoroughly**: Test CRUD operations with Apps Script debugger
+6. **Monitor Quotas**: Track API usage to avoid hitting limits
+7. **Backup Data**: Regularly backup your Google Sheet
+8. **Use IDs**: Always include unique IDs for update/delete operations
+
+## Related Documentation
+
+- [WhatsApp Bot Integration](/integrations/whatsapp-bot)
+- [Firebase Setup](/integrations/firebase)
+- [API Reference](/api/overview)

@@ -1,0 +1,634 @@
+---
+title: 'Reservation System'
+description: 'Intelligent table reservation management with availability checking and time-based rules'
+icon: 'calendar-check'
+---
+
+## Overview
+
+The Reservation System manages table bookings with intelligent availability checking, automatic table assignment, and configurable time-based rules. The system integrates with table management and supports multi-channel reservation creation.
+
+### Key Benefits
+
+- **Intelligent Table Assignment**: Automatically finds optimal table combinations for party size
+- **Real-Time Availability**: Checks against existing reservations and active dine-in orders
+- **Configurable Time Rules**: Set minimum booking time, duration, and slot intervals
+- **Multi-Channel Support**: Accept reservations from admin, web assistant, or WhatsApp bot
+- **Schedule Integration**: Respects business hours and special schedule exceptions
+
+## Reservation Data Structure
+
+### Reservation Interface
+
+From `types.ts:126-141`:
+
+```typescript
+export interface Reservation {
+  id: string;                              // Format: RES-{timestamp}-{random}
+  customerName: string;
+  customerPhone?: string;
+  guests: number;                          // Number of people
+  reservationTime: string;                 // ISO timestamp of booking
+  tableIds: string[];                      // Assigned table IDs
+  status: ReservationStatus;               // Current status
+  statusHistory: StatusHistory[];          // Full audit trail
+  finishedAt: string | null;               // When completed/cancelled
+  cancellationReason?: ReservationCancellationReason;
+  notes?: string;
+  createdAt: string;                       // When reservation was made
+  orderId?: string;                        // Link to order if customer orders
+  createdBy: CreatedBy;                    // Source: Admin | Web | WhatsApp
+}
+```
+
+## Reservation Statuses
+
+From `types.ts:111-118`:
+
+```typescript
+export enum ReservationStatus {
+  PENDING = 'Pendiente',          // Initial state
+  CONFIRMED = 'Confirmada',       // Reservation confirmed
+  SEATED = 'Sentado',            // Customer arrived and seated
+  COMPLETED = 'Completada',      // Dining finished
+  CANCELLED = 'Cancelada',       // Cancelled before arrival
+  NO_SHOW = 'No Se Presentó',   // Customer didn't arrive
+}
+```
+
+### Cancellation Reasons
+
+From `types.ts:120-124`:
+
+```typescript
+export enum ReservationCancellationReason {
+  USER = 'Cancelado por el cliente',
+  ADMIN = 'Cancelado por el local',
+  SYSTEM = 'Cancelado por el sistema',
+}
+```
+
+## Reservation Settings
+
+From `types.ts:143-150`:
+
+```typescript
+export interface ReservationSettings {
+  duration: number;              // Reservation duration in minutes (default: 90)
+  minBookingTime: number;        // Minimum advance booking time in minutes (default: 60)
+  initialBlockTime: number;      // How early tables get blocked (default: 60)
+  extensionBlockTime: number;    // Extended block time (default: 30)
+  modificationLockTime: number;  // How late modifications allowed (default: 60)
+  slotInterval: number;          // Time between available slots (default: 30)
+}
+```
+
+<Accordion title="Default Settings Explanation">
+  **duration: 90 minutes**  
+  How long each reservation lasts. Tables are blocked for this duration.
+  
+  **minBookingTime: 60 minutes**  
+  Customers must book at least 60 minutes in advance for same-day reservations.
+  
+  **initialBlockTime: 60 minutes**  
+  Tables become "blocked" (not available) 60 minutes before reservation time.
+  
+  **extensionBlockTime: 30 minutes**  
+  Additional buffer for table turnover.
+  
+  **modificationLockTime: 60 minutes**  
+  Reservations can't be modified within 60 minutes of start time.
+  
+  **slotInterval: 30 minutes**  
+  Available time slots are shown in 30-minute increments (e.g., 19:00, 19:30, 20:00).
+</Accordion>
+
+## Core Service Functions
+
+From `services/reservationService.ts`:
+
+### Creating Reservations
+
+```typescript
+addReservation(
+  reservationData: Omit<Reservation, 'id' | 'status' | 'createdAt' | 'statusHistory' | 'finishedAt'>
+): Promise<Reservation>
+```
+
+**Example Usage**:
+
+```typescript
+import { addReservation } from './services/reservationService';
+import { CreatedBy } from './types';
+
+const newReservation = await addReservation({
+  customerName: 'María González',
+  customerPhone: '1234567890',
+  guests: 4,
+  reservationTime: '2026-03-15T20:00:00.000Z',
+  tableIds: ['TBL-001', 'TBL-002'],  // Pre-assigned tables
+  notes: 'Cumpleaños - preparar decoración',
+  createdBy: CreatedBy.ADMIN,
+});
+
+// Returns reservation with:
+// - Auto-generated ID (RES-{timestamp}-{random})
+// - status: PENDING
+// - statusHistory initialized
+```
+
+### Finding Available Tables
+
+```typescript
+findAvailableTables(
+  time: Date,
+  guests: number,
+  reservationToIgnoreId?: string  // For editing existing reservation
+): string[] | null
+```
+
+**How It Works** (from `reservationService.ts:256-274`):
+
+1. **Check Single Table Fit**: Looks for one table with capacity ≥ guests
+2. **Combine Tables**: If no single table fits, combines multiple tables
+3. **Return Best Match**: Returns smallest suitable table or combination
+
+**Example**:
+
+```typescript
+import { findAvailableTables } from './services/reservationService';
+
+const reservationTime = new Date('2026-03-15T20:00:00.000Z');
+const tableIds = findAvailableTables(reservationTime, 6);
+
+if (tableIds) {
+  console.log(`Tables assigned: ${tableIds.join(', ')}`);
+  // e.g., "TBL-123, TBL-456" (two 4-person tables for 6 guests)
+} else {
+  console.log('No availability for 6 guests at this time');
+}
+```
+
+### Checking Availability Slots
+
+```typescript
+getAvailability(
+  date: Date,
+  guests: number
+): string[]  // Returns array of available time slots like ["19:00", "19:30", "20:00"]
+```
+
+**Example**:
+
+```typescript
+import { getAvailability } from './services/reservationService';
+
+const date = new Date('2026-03-15');
+const availableSlots = getAvailability(date, 4);
+
+console.log(availableSlots);
+// Output: ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30"]
+```
+
+**How It Works** (from `reservationService.ts:276-321`):
+
+<Steps>
+  <Step title="Check Business Schedule">
+    Verifies the restaurant is open on the requested date.
+  </Step>
+  
+  <Step title="Apply Schedule Exceptions">
+    Checks for holidays or special hours that override normal schedule.
+  </Step>
+  
+  <Step title="Generate Time Slots">
+    Creates slots based on `slotInterval` (e.g., every 30 minutes).
+  </Step>
+  
+  <Step title="Filter Past Times">
+    For today, removes slots earlier than current time + `minBookingTime`.
+  </Step>
+  
+  <Step title="Check Table Availability">
+    For each slot, calls `findAvailableTables()` to verify capacity.
+  </Step>
+  
+  <Step title="Return Available Slots">
+    Returns array of time strings ("HH:MM") that have availability.
+  </Step>
+</Steps>
+
+### Updating Reservation Status
+
+```typescript
+updateReservationStatus(
+  reservationId: string,
+  status: ReservationStatus,
+  cancellationReason?: ReservationCancellationReason
+): Promise<Reservation>
+```
+
+**Example**:
+
+```typescript
+import { updateReservationStatus } from './services/reservationService';
+import { ReservationStatus, ReservationCancellationReason } from './types';
+
+// Customer arrived - seat them
+await updateReservationStatus(
+  'RES-1234567890-abc',
+  ReservationStatus.SEATED
+);
+
+// Customer cancelled
+await updateReservationStatus(
+  'RES-1234567890-abc',
+  ReservationStatus.CANCELLED,
+  ReservationCancellationReason.USER
+);
+```
+
+<Warning>
+**Status Update Rules**:
+
+- Cannot modify reservations in finished states (COMPLETED, CANCELLED, NO_SHOW)
+- Cancellation requires a reason
+- Status changes create notifications
+- `finishedAt` timestamp auto-set when moving to finished state
+</Warning>
+
+### Managing Reservation Settings
+
+```typescript
+// Get current settings
+getReservationSettings(): ReservationSettings
+
+// Update settings
+saveReservationSettings(settings: ReservationSettings): Promise<void>
+
+// Fetch from Firebase and cache
+fetchAndCacheReservationSettings(): Promise<ReservationSettings>
+```
+
+**Example**:
+
+```typescript
+import { getReservationSettings, saveReservationSettings } from './services/reservationService';
+
+// Get current settings
+const settings = getReservationSettings();
+console.log(`Reservation duration: ${settings.duration} minutes`);
+
+// Update settings
+await saveReservationSettings({
+  ...settings,
+  duration: 120,        // Increase to 2 hours
+  slotInterval: 15,     // Offer slots every 15 minutes
+});
+```
+
+## Availability Logic
+
+The system checks multiple factors when determining availability:
+
+### Conflict Detection
+
+From `reservationService.ts:222-254`:
+
+<Tabs>
+  <Tab title="Existing Reservations">
+    Checks if tables are already reserved:
+    
+    ```typescript
+    // For each confirmed/seated reservation
+    const existingResStart = new Date(reservation.reservationTime);
+    const existingResEnd = new Date(existingResStart.getTime() + duration * 60000);
+    
+    // Check overlap
+    if (newResStart < existingResEnd && newResEnd > existingResStart) {
+      // Tables are blocked
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Active Dine-In Orders">
+    Checks if tables have active orders:
+    
+    ```typescript
+    // Filter dine-in orders that aren't finished
+    const occupiedOrders = orders.filter(
+      o => o.type === OrderType.DINE_IN && !isOrderFinished(o.status)
+    );
+    
+    // Block tables with active orders during reservation window
+    ```
+  </Tab>
+  
+  <Tab title="Schedule Validation">
+    Verifies restaurant is open:
+    
+    ```typescript
+    const daySchedule = schedule[dayName];
+    
+    // Check for schedule exceptions (holidays, etc.)
+    const exception = exceptions.find(
+      ex => date >= ex.startDate && date <= ex.endDate
+    );
+    
+    if (exception && exception.type === ExceptionType.CLOSED) {
+      return [];  // No availability
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Table Assignment Strategy
+
+From `reservationService.ts:256-274`:
+
+**Single Table First**:
+```typescript
+const singleFit = availableTables
+  .filter(t => t.capacity >= guests)
+  .sort((a, b) => a.capacity - b.capacity)[0];  // Smallest suitable table
+
+if (singleFit) return [singleFit.id];
+```
+
+**Combine Tables**:
+```typescript
+const sortedTables = [...availableTables].sort((a, b) => b.capacity - a.capacity);
+const selectedTables: Table[] = [];
+let currentCapacity = 0;
+
+for (const table of sortedTables) {
+  if (currentCapacity < guests) {
+    selectedTables.push(table);
+    currentCapacity += table.capacity;
+  }
+}
+
+return currentCapacity >= guests ? selectedTables.map(t => t.id) : null;
+```
+
+## User Workflows
+
+### Admin Creating a Reservation
+
+<Steps>
+  <Step title="Navigate to Reservations Panel">
+    Click "Reservas" in the admin sidebar.
+  </Step>
+  
+  <Step title="Click 'Nueva Reserva'">
+    Opens reservation form.
+  </Step>
+  
+  <Step title="Select Date and Time">
+    Choose date and time. System shows available slots based on:
+    - Business hours
+    - Existing reservations
+    - Active dine-in orders
+    - Table capacity
+  </Step>
+  
+  <Step title="Enter Party Size">
+    Number of guests. System automatically:
+    - Finds suitable tables
+    - Assigns optimal combination
+    - Shows if no availability
+  </Step>
+  
+  <Step title="Add Customer Details">
+    Name, phone (optional), and any special notes.
+  </Step>
+  
+  <Step title="Submit Reservation">
+    System:
+    - Assigns tables automatically
+    - Sets status to PENDING
+    - Creates notification
+    - Syncs to Firebase
+  </Step>
+</Steps>
+
+### AI Assistant Reservation Flow
+
+From `components/ChatAssistantModal.tsx:212-252` and `services/geminiService.ts`:
+
+<Steps>
+  <Step title="Customer Requests Reservation">
+    AI sets `actionLock: 'reservation'` to focus conversation.
+  </Step>
+  
+  <Step title="Gather Details">
+    AI collects:
+    - Party size
+    - Date (handles "today", "tomorrow", "Friday")
+    - Time
+    - Customer name and phone
+  </Step>
+  
+  <Step title="Check Availability in Real-Time">
+    AI has access to current availability (from `reservationService.ts:87-142`):
+    - Sees busy time slots
+    - Knows table capacity limits
+    - Suggests alternatives if requested time is full
+  </Step>
+  
+  <Step title="Confirm Details">
+    AI presents summary and asks for confirmation.
+  </Step>
+  
+  <Step title="Generate Reservation JSON">
+    ```json
+    {
+      "intent": "RESERVATION",
+      "customerName": "Carlos Ruiz",
+      "customerPhone": "1234567890",
+      "guests": 4,
+      "date": "2026-03-15",
+      "time": "20:00"
+    }
+    ```
+  </Step>
+  
+  <Step title="System Creates Reservation">
+    - Calls `findAvailableTables()` one final time
+    - If available: creates reservation
+    - If not available: AI offers alternatives
+  </Step>
+</Steps>
+
+### Processing Reservations
+
+<Steps>
+  <Step title="Reservation Created (PENDING)">
+    Appears in admin panel, notification sent.
+  </Step>
+  
+  <Step title="Admin Confirms (CONFIRMED)">
+    Usually done after verifying details or calling customer.
+  </Step>
+  
+  <Step title="Customer Arrives (SEATED)">
+    Admin marks as seated when customer arrives. Tables now show as "Occupied".
+  </Step>
+  
+  <Step title="Customer Finishes (COMPLETED)">
+    After dining and payment, mark as completed.
+    
+    **Alternative Outcomes**:
+    - CANCELLED: Customer cancelled in advance
+    - NO_SHOW: Customer didn't arrive
+  </Step>
+</Steps>
+
+## Time-Based Rules
+
+### Minimum Booking Time
+
+From `reservationService.ts:310-313`:
+
+```typescript
+if (isToday && currentTime < new Date(now.getTime() + settings.minBookingTime * 60 * 1000)) {
+  // Skip this slot - too soon
+  continue;
+}
+```
+
+**Example**: If it's 6:00 PM and `minBookingTime: 60`, customers cannot book for 6:30 PM (only 30 minutes away). First available slot would be 7:00 PM.
+
+### Table Blocking Window
+
+From `components/AdminDashboard.tsx` and `tableService.ts:189-214`:
+
+```typescript
+const blockWindowEnd = new Date(now.getTime() + 60 * 60 * 1000);  // 1 hour from now
+
+const blockedTableMap = new Map<string, Reservation>();
+const reservedTableMap = new Map<string, Reservation>();
+
+confirmedReservations.forEach(res => {
+  const resTime = new Date(res.reservationTime);
+  
+  if (resTime > now && resTime <= blockWindowEnd) {
+    // Within 1 hour - table shows as "Bloqueada" (Blocked)
+    res.tableIds.forEach(tableId => blockedTableMap.set(tableId, res));
+  } else if (resTime > blockWindowEnd && resTime <= reservationWindowEnd) {
+    // 1-2 hours away - table shows as "Reservada" (Reserved)
+    res.tableIds.forEach(tableId => reservedTableMap.set(tableId, res));
+  }
+});
+```
+
+**Visual States in Admin Panel**:
+- **Blocked** (red): Reservation starts within 1 hour
+- **Reserved** (yellow): Reservation is 1-2 hours away
+- **Free** (green): No upcoming reservations
+
+## Schedule Integration
+
+From `reservationService.ts:276-291`:
+
+### Business Hours Check
+
+```typescript
+const schedule = getScheduleFromCache();
+const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const dayName = dayNames[date.getDay()];
+let daySchedule = schedule[dayName];
+
+if (!daySchedule || !daySchedule.isOpen) {
+  return [];  // No slots available - closed
+}
+```
+
+### Schedule Exceptions
+
+```typescript
+const exceptions = getScheduleExceptionsFromCache();
+const applicableException = exceptions.find(
+  ex => dateStr >= ex.startDate && dateStr <= ex.endDate
+);
+
+if (applicableException) {
+  if (applicableException.type === ExceptionType.CLOSED) {
+    return [];  // Closed for holiday
+  }
+  if (applicableException.type === ExceptionType.SPECIAL_HOURS && applicableException.slots) {
+    daySchedule = { isOpen: true, slots: applicableException.slots };
+  }
+}
+```
+
+## Real-Time Synchronization
+
+From `components/AdminDashboard.tsx:107-108`:
+
+```typescript
+const unsubReservations = onSnapshot(
+  collection(db, 'Reservations'),
+  (querySnapshot) => {
+    const reservations = querySnapshot.docs.map(doc => doc.data() as Reservation);
+    updateReservationsCache(reservations);
+    setDataTimestamp(Date.now());
+  }
+);
+
+const unsubSettings = onSnapshot(
+  doc(db, 'ReservationSettings', 'main'),
+  (docSnap) => {
+    if (docSnap.exists()) {
+      updateSettingsCache(docSnap.data() as ReservationSettings);
+    }
+  }
+);
+```
+
+## Notifications
+
+From `components/AdminDashboard.tsx:189-203`:
+
+```typescript
+// Check for reservations starting within 15 minutes
+const upcomingReservations = getReservationsFromCache().filter(r => {
+  if (r.status !== ReservationStatus.CONFIRMED) return false;
+  const diffMinutes = (new Date(r.reservationTime).getTime() - Date.now()) / 60000;
+  return diffMinutes > 0 && diffMinutes <= 15;
+});
+
+upcomingReservations.forEach(res => {
+  addNotification({
+    message: `La reserva para ${res.customerName} (${res.guests}p) comienza en menos de 15 minutos.`,
+    type: 'reservation',
+    relatedId: res.id,
+  });
+});
+```
+
+## Configuration Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Set Realistic Duration" icon="clock">
+    Default 90 minutes works for most restaurants. Adjust based on your average dining time.
+  </Card>
+  
+  <Card title="Balance Slot Intervals" icon="calendar">
+    Smaller intervals (15-30 min) offer flexibility but may overwhelm kitchen. 30-60 min recommended.
+  </Card>
+  
+  <Card title="Require Advance Booking" icon="hourglass-start">
+    60-minute `minBookingTime` prevents last-minute rushes and ensures prep time.
+  </Card>
+  
+  <Card title="Use Schedule Exceptions" icon="calendar-xmark">
+    Configure holidays and special events in advance to prevent booking issues.
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Tables](/features/tables) - Reservation system assigns and blocks tables
+- [Orders](/features/orders) - Reservations can link to orders when customer dines
+- [AI Assistants](/features/ai-assistants) - Automated reservation booking via Slice and WhatsApp

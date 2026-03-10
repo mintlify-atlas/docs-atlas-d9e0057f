@@ -1,0 +1,504 @@
+---
+title: Tables API
+description: Table management, status tracking, and occupancy control
+icon: "table"
+---
+
+## Overview
+
+The Tables API manages restaurant tables with real-time status tracking, manual occupancy control, and integration with orders and reservations. It provides enriched table data that combines base table info with current status.
+
+## Table Management
+
+### getTablesFromCache
+
+Retrieves tables from in-memory cache synchronously.
+
+```typescript
+export const getTablesFromCache = (): Table[]
+```
+
+<ResponseField name="tables" type="Table[]">
+  Array of tables sorted alphabetically by name
+</ResponseField>
+
+---
+
+### fetchAndCacheTables
+
+Fetches tables from Firebase and updates caches.
+
+```typescript
+export const fetchAndCacheTables = async (): Promise<Table[]>
+```
+
+---
+
+### addTable
+
+Creates a new table.
+
+```typescript
+export const addTable = async (tableData: Omit<Table, 'id'>): Promise<Table>
+```
+
+<ParamField path="tableData" type="object" required>
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Table name/number (e.g., "Mesa 1", "Barra 3")
+    </ParamField>
+    
+    <ParamField path="capacity" type="number" required>
+      Maximum number of guests
+    </ParamField>
+    
+    <ParamField path="allowsReservations" type="boolean" required>
+      Whether table can be reserved (default: true)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="table" type="Table">
+  Created table with:
+  - Generated ID (format: `TBL-{timestamp}-{random}`)
+  - `overrideStatus` set to `null`
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { addTable } from './services/tableService';
+
+const table = await addTable({
+  name: "Mesa 10",
+  capacity: 6,
+  allowsReservations: true
+});
+
+console.log('Table created:', table.id);
+```
+
+```typescript Response
+{
+  id: "TBL-1709876543210-xyz89",
+  name: "Mesa 10",
+  capacity: 6,
+  allowsReservations: true,
+  overrideStatus: null
+}
+```
+</CodeGroup>
+
+---
+
+### updateTable
+
+Updates an existing table.
+
+```typescript
+export const updateTable = async (updatedTable: Table): Promise<Table>
+```
+
+<ParamField path="updatedTable" type="Table" required>
+  Complete table object with all fields
+</ParamField>
+
+---
+
+### deleteTable
+
+Deletes a table by ID.
+
+```typescript
+export const deleteTable = async (tableId: string): Promise<void>
+```
+
+---
+
+## Manual Status Control
+
+### setTableOverrideStatus
+
+Manually sets table status, overriding automatic status detection.
+
+```typescript
+export const setTableOverrideStatus = async (
+  tableId: string,
+  status: 'Bloqueada' | 'Ocupada' | null
+): Promise<Table>
+```
+
+<ParamField path="tableId" type="string" required>
+  The table ID
+</ParamField>
+
+<ParamField path="status" type="'Bloqueada' | 'Ocupada' | null" required>
+  - `'Bloqueada'` - Table is blocked/unavailable
+  - `'Ocupada'` - Table is manually marked as occupied
+  - `null` - Remove manual override (use automatic status)
+</ParamField>
+
+<ResponseField name="table" type="Table">
+  Updated table with:
+  - New `overrideStatus`
+  - `occupiedSince` timestamp if status is 'Ocupada'
+  - Cleared session data if status is `null`
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { setTableOverrideStatus } from './services/tableService';
+
+// Block a table
+await setTableOverrideStatus("T1", "Bloqueada");
+
+// Manually mark as occupied
+await setTableOverrideStatus("T2", "Ocupada");
+
+// Clear manual status
+await setTableOverrideStatus("T1", null);
+```
+</CodeGroup>
+
+**Use Cases:**
+- Block table for maintenance or special events
+- Manually mark walk-in customers before creating order
+- Clear status when customers leave
+
+---
+
+### occupyTableAndGenerateCode
+
+Marks table as occupied and generates a 4-digit access code.
+
+```typescript
+export const occupyTableAndGenerateCode = async (tableId: string): Promise<string>
+```
+
+<ParamField path="tableId" type="string" required>
+  The table ID to occupy
+</ParamField>
+
+<ResponseField name="accessCode" type="string">
+  4-digit access code (e.g., "3947")
+</ResponseField>
+
+**Behavior:**
+- Sets `overrideStatus` to 'Ocupada'
+- Sets `occupiedSince` timestamp
+- Generates random 4-digit code
+- Stores code in `accessCode` field
+
+<CodeGroup>
+```typescript Usage
+import { occupyTableAndGenerateCode } from './services/tableService';
+
+const code = await occupyTableAndGenerateCode("T3");
+console.log('Table access code:', code);
+// "7142"
+```
+</CodeGroup>
+
+<Note>
+  Access codes can be used for customer self-service ordering or payment verification.
+</Note>
+
+---
+
+### verifyTableAccessCode
+
+Verifies an access code for a table.
+
+```typescript
+export const verifyTableAccessCode = (tableId: string, code: string): boolean
+```
+
+<ParamField path="tableId" type="string" required>
+  The table ID
+</ParamField>
+
+<ParamField path="code" type="string" required>
+  The access code to verify
+</ParamField>
+
+<ResponseField name="isValid" type="boolean">
+  `true` if code matches, `false` otherwise
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { verifyTableAccessCode } from './services/tableService';
+
+const isValid = verifyTableAccessCode("T3", "7142");
+if (isValid) {
+  console.log('Access granted');
+}
+```
+</CodeGroup>
+
+---
+
+### updateTableSession
+
+Updates session information for an occupied table.
+
+```typescript
+export const updateTableSession = async (
+  tableId: string,
+  customerName: string,
+  guests: number
+): Promise<void>
+```
+
+<ParamField path="tableId" type="string" required>
+  The table ID
+</ParamField>
+
+<ParamField path="customerName" type="string" required>
+  Customer name for the session
+</ParamField>
+
+<ParamField path="guests" type="number" required>
+  Number of guests
+</ParamField>
+
+<CodeGroup>
+```typescript Usage
+import { updateTableSession } from './services/tableService';
+
+await updateTableSession("T3", "Pedro Martínez", 3);
+```
+</CodeGroup>
+
+---
+
+## Enriched Table Data
+
+### enrichTables
+
+Enriches tables with real-time status based on orders and reservations.
+
+```typescript
+export const enrichTables = (
+  tables: Table[],
+  orders: Order[],
+  reservations: Reservation[]
+): EnrichedTable[]
+```
+
+<ParamField path="tables" type="Table[]" required>
+  Array of base tables
+</ParamField>
+
+<ParamField path="orders" type="Order[]" required>
+  Array of orders to check for table occupancy
+</ParamField>
+
+<ParamField path="reservations" type="Reservation[]" required>
+  Array of reservations to check for upcoming bookings
+</ParamField>
+
+<ResponseField name="enrichedTables" type="EnrichedTable[]">
+  Tables with computed status and details
+</ResponseField>
+
+**Status Priority (highest to lowest):**
+1. **Manual Override** - `overrideStatus` takes precedence
+2. **Active Orders** - Tables with active dine-in orders
+3. **Upcoming Reservations** - Tables reserved within next 2 hours
+4. **Free** - No conflicts
+
+**Status Types:**
+- `'Libre'` - Available
+- `'Ocupada'` - Has active order or manual override
+- `'Reservada'` - Reserved 1-2 hours from now
+- `'Bloqueada'` - Blocked (manual or reserved within 1 hour)
+
+<CodeGroup>
+```typescript Usage
+import { enrichTables, getTablesFromCache } from './services/tableService';
+import { getOrdersFromCache } from './services/orderService';
+import { getReservationsFromCache } from './services/reservationService';
+
+const tables = getTablesFromCache();
+const orders = getOrdersFromCache();
+const reservations = getReservationsFromCache();
+
+const enrichedTables = enrichTables(tables, orders, reservations);
+
+enrichedTables.forEach(table => {
+  console.log(`${table.name}: ${table.status}`);
+  if (table.details) {
+    console.log(`  Customer: ${table.details.customerName}`);
+  }
+  if (table.accumulatedTotal) {
+    console.log(`  Total: $${table.accumulatedTotal}`);
+  }
+});
+```
+
+```typescript Output
+Mesa 1: Ocupada
+  Customer: Juan Pérez
+  Total: $24600
+Mesa 2: Reservada
+  Customer: María González
+  Time: 20:30
+Mesa 3: Libre
+Mesa 4: Bloqueada
+  Customer: Administrador
+```
+</CodeGroup>
+
+**Accumulated Totals:**
+- For occupied tables, includes all orders placed since `occupiedSince`
+- Useful for showing running tab to customers and staff
+
+---
+
+### getEnrichedTableById
+
+Gets enriched data for a single table.
+
+```typescript
+export const getEnrichedTableById = (tableId: string): EnrichedTable | null
+```
+
+<ParamField path="tableId" type="string" required>
+  The table ID
+</ParamField>
+
+<ResponseField name="enrichedTable" type="EnrichedTable | null">
+  Enriched table data or `null` if not found
+</ResponseField>
+
+---
+
+## Availability Checking
+
+### getAvailableTablesForDineIn
+
+Gets tables available for immediate dine-in orders.
+
+```typescript
+export const getAvailableTablesForDineIn = (
+  reservationToIgnoreId?: string
+): Table[]
+```
+
+<ParamField path="reservationToIgnoreId" type="string">
+  Reservation ID to exclude from conflict check (useful when converting reservation to order)
+</ParamField>
+
+<ResponseField name="availableTables" type="Table[]">
+  Tables that are:
+  - Not manually blocked or occupied
+  - Not in use by active dine-in orders
+  - Not reserved within the next hour
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { getAvailableTablesForDineIn } from './services/tableService';
+
+const availableTables = getAvailableTablesForDineIn();
+
+if (availableTables.length > 0) {
+  console.log('Available tables:', availableTables.map(t => t.name));
+} else {
+  console.log('No tables available');
+}
+```
+</CodeGroup>
+
+---
+
+## TypeScript Types
+
+### Table Interface
+
+```typescript
+interface Table {
+  id: string;
+  name: string;
+  capacity: number;
+  allowsReservations: boolean;
+  overrideStatus: 'Bloqueada' | 'Ocupada' | null;
+  occupiedSince?: string | null; // ISO timestamp
+  accessCode?: string; // 4-digit code
+  currentSession?: {
+    customerName: string;
+    guests: number;
+  };
+}
+```
+
+### EnrichedTable Interface
+
+```typescript
+interface EnrichedTable extends Table {
+  status: TableStatus; // 'Libre' | 'Ocupada' | 'Reservada' | 'Bloqueada'
+  details?: {
+    type: 'order' | 'reservation';
+    id: string;
+    customerName: string;
+    time?: string; // For reservations
+    startTime?: string; // For orders
+    orderStatus?: OrderStatus; // For orders
+  };
+  activeOrdersOnTable?: Order[]; // All orders at this table
+  accumulatedTotal?: number; // Sum of all order totals
+}
+```
+
+### TableStatus Type
+
+```typescript
+type TableStatus = 'Libre' | 'Ocupada' | 'Reservada' | 'Bloqueada';
+```
+
+---
+
+## Complete Example
+
+### Managing Table Lifecycle
+
+```typescript
+import {
+  occupyTableAndGenerateCode,
+  updateTableSession,
+  getEnrichedTableById,
+  setTableOverrideStatus
+} from './services/tableService';
+import { saveOrder, OrderType, PaymentMethod, CreatedBy } from './services/orderService';
+
+// 1. Customer arrives, occupy table and get code
+const tableId = "T3";
+const accessCode = await occupyTableAndGenerateCode(tableId);
+console.log('Show customer this code:', accessCode);
+
+// 2. Update session info
+await updateTableSession(tableId, "Ana Torres", 2);
+
+// 3. Customer places order
+const order = await saveOrder({
+  customer: { name: "Ana Torres", phone: "+5491167890123" },
+  items: [
+    { name: "Pizza Muzzarella", quantity: 1, price: 9200, isPromotion: false, itemId: "PROD-1" }
+  ],
+  total: 9200,
+  type: OrderType.DINE_IN,
+  tableIds: [tableId],
+  guests: 2,
+  paymentMethod: PaymentMethod.CASH,
+  createdBy: CreatedBy.ADMIN
+});
+
+// 4. Check table status
+const enrichedTable = getEnrichedTableById(tableId);
+console.log('Table status:', enrichedTable?.status);
+console.log('Running total:', enrichedTable?.accumulatedTotal);
+
+// 5. Customer leaves, clear table
+await setTableOverrideStatus(tableId, null);
+console.log('Table cleared and ready for next customer');
+```

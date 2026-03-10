@@ -1,0 +1,699 @@
+---
+title: Installation Guide
+description: Complete installation and configuration guide for Ai Studio
+---
+
+## Overview
+
+This guide covers everything you need to install, configure, and deploy Ai Studio for production use. For a faster local setup, see the [Quickstart Guide](/quickstart).
+
+## System Requirements
+
+### Development Environment
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node-js">
+    **Version 18.0+** required
+    
+    Recommended: Node.js 20 LTS
+  </Card>
+  <Card title="Package Manager" icon="box">
+    **npm** (included with Node.js)
+    
+    Or use yarn/pnpm if preferred
+  </Card>
+  <Card title="Git" icon="git-alt">
+    **Latest version**
+    
+    For cloning and version control
+  </Card>
+  <Card title="Code Editor" icon="code">
+    **VS Code** recommended
+    
+    With TypeScript/React extensions
+  </Card>
+</CardGroup>
+
+### Cloud Services
+
+<Steps>
+  <Step title="Firebase Account">
+    - Free tier supports small to medium restaurants
+    - Paid tier (Blaze) required for Netlify Functions
+    - [Create account](https://firebase.google.com/)
+  </Step>
+  <Step title="Google Cloud Account">
+    - Needed for Gemini API access
+    - Free tier includes generous AI quotas
+    - [Get started](https://aistudio.google.com/)
+  </Step>
+  <Step title="Netlify Account (Optional)">
+    - For hosting and serverless functions
+    - Free tier available
+    - [Sign up](https://www.netlify.com/)
+  </Step>
+</Steps>
+
+## Installation Steps
+
+### 1. Clone the Repository
+
+```bash
+git clone <your-ai-studio-repo-url>
+cd ai-studio
+```
+
+### 2. Install Dependencies
+
+Install all required packages:
+
+```bash
+npm install
+```
+
+<Accordion title="View Complete Dependency List">
+
+From `package.json`:
+
+```json
+{
+  "dependencies": {
+    "@firebase/app": "^0.14.5",
+    "@firebase/firestore": "^4.9.2",
+    "@google/genai": "^1.15.0",
+    "@netlify/functions": "^4.2.5",
+    "firebase": "^12.5.0",
+    "html-to-image": "^1.11.11",
+    "marked": "^13.0.2",
+    "motion": "^12.34.3",
+    "qrcode": "^1.5.3",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.2.1",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
+```
+
+</Accordion>
+
+### 3. Firebase Project Setup
+
+<Steps>
+  <Step title="Create Firebase Project">
+    1. Go to [Firebase Console](https://console.firebase.google.com/)
+    2. Click "Add project" or "Create a project"
+    3. Enter project name (e.g., "ai-studio-production")
+    4. Choose whether to enable Google Analytics
+    5. Click "Create project" and wait for initialization
+  </Step>
+
+  <Step title="Enable Firestore Database">
+    1. In the Firebase Console, click "Firestore Database"
+    2. Click "Create database"
+    3. **For development**: Choose "Start in test mode"
+    4. **For production**: Choose "Start in production mode"
+    5. Select a location (choose closest to your users)
+    6. Click "Enable"
+
+    <Warning>
+      Test mode allows unrestricted read/write access for 30 days. You MUST configure security rules before going to production.
+    </Warning>
+  </Step>
+
+  <Step title="Configure Security Rules">
+    For production, set up proper Firestore security rules:
+
+    ```javascript
+    rules_version = '2';
+    service cloud.firestore {
+      match /databases/{database}/documents {
+        // Products are public read, admin write
+        match /products/{document=**} {
+          allow read: if true;
+          allow write: if request.auth != null;
+        }
+        
+        // Orders are created by anyone, but only readable by admins
+        match /orders/{document=**} {
+          allow create: if true;
+          allow read, update, delete: if request.auth != null;
+        }
+        
+        // Reservations same as orders
+        match /reservations/{document=**} {
+          allow create: if true;
+          allow read, update, delete: if request.auth != null;
+        }
+        
+        // Tables, settings, and admin data require authentication
+        match /{document=**} {
+          allow read, write: if request.auth != null;
+        }
+      }
+    }
+    ```
+
+    <Note>
+      Adjust these rules based on your security requirements. Consider implementing authentication for better security.
+    </Note>
+  </Step>
+
+  <Step title="Get Firebase Configuration">
+    1. Click the gear icon ⚙️ → "Project settings"
+    2. Scroll to "Your apps" section
+    3. Click the web icon `</>` to add a web app
+    4. Register app with nickname (e.g., "Ai Studio Web")
+    5. Copy the `firebaseConfig` object
+
+    Example configuration:
+    ```javascript
+    const firebaseConfig = {
+      apiKey: "AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      authDomain: "ai-studio-prod.firebaseapp.com",
+      projectId: "ai-studio-prod",
+      storageBucket: "ai-studio-prod.appspot.com",
+      messagingSenderId: "123456789012",
+      appId: "1:123456789012:web:abcdef123456",
+      measurementId: "G-ABCDEFGHIJ"
+    };
+    ```
+  </Step>
+</Steps>
+
+### 4. Gemini API Configuration
+
+<Steps>
+  <Step title="Get API Key">
+    1. Visit [Google AI Studio](https://aistudio.google.com/apikey)
+    2. Sign in with your Google account
+    3. Click "Get API key" or "Create API key"
+    4. Select "Create API key in new project" or choose existing project
+    5. Copy the generated key (format: `AIzaSy...`)
+
+    <Warning>
+      Store your API key securely. Never commit it to version control or expose it in client-side code.
+    </Warning>
+  </Step>
+
+  <Step title="Understand API Usage">
+    The Gemini API is used in `services/geminiService.ts`:
+
+    ```typescript
+    import { GoogleGenAI } from "@google/genai";
+
+    const ai = new GoogleGenAI({ 
+      apiKey: process.env.API_KEY! 
+    });
+
+    export const sendMessageToGemini = async (
+      history: ChatMessage[], 
+      actionLock: 'order' | 'reservation' | null = null
+    ): Promise<{ text: string }> => {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: formattedHistory,
+        config: {
+          systemInstruction: getSystemInstruction(actionLock),
+        },
+      });
+      return { text: response.text };
+    };
+    ```
+
+    <Note>
+      The system uses **Gemini 2.5 Flash** for fast, cost-effective responses. You can switch to `gemini-2.5-pro` for more complex reasoning if needed.
+    </Note>
+  </Step>
+</Steps>
+
+### 5. Environment Configuration
+
+<Steps>
+  <Step title="Create Environment File">
+    Copy the example environment file:
+
+    ```bash
+    cp .env.example .env.local
+    ```
+
+    Or create a new `.env.local` file in the project root.
+  </Step>
+
+  <Step title="Configure All Variables">
+    Edit `.env.local` with your actual values:
+
+    ```bash .env.local
+    # ===========================================
+    # Gemini AI Configuration
+    # ===========================================
+    GEMINI_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+    # ===========================================
+    # Firebase Configuration
+    # ===========================================
+    VITE_FIREBASE_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+    VITE_FIREBASE_PROJECT_ID=your-project-id
+    VITE_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+    VITE_FIREBASE_MESSAGING_SENDER_ID=123456789012
+    VITE_FIREBASE_APP_ID=1:123456789012:web:abcdef123456
+    VITE_FIREBASE_MEASUREMENT_ID=G-ABCDEFGHIJ
+
+    # ===========================================
+    # Application Configuration
+    # ===========================================
+    # Optional: Base URL for QR codes and deep links
+    # For development, use http://localhost:3000
+    # For production, use your actual domain
+    VITE_APP_URL=https://your-domain.com
+    ```
+
+    <Note>
+      All variables prefixed with `VITE_` are exposed to the client-side code. The `GEMINI_API_KEY` without prefix is used server-side only.
+    </Note>
+  </Step>
+
+  <Step title="Verify Configuration">
+    The Firebase configuration is loaded in `services/firebase.ts`:
+
+    ```typescript
+    const firebaseConfig = {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID,
+      measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+    };
+
+    const app = getApps().length === 0 
+      ? initializeApp(firebaseConfig) 
+      : getApp();
+    const db = getFirestore(app);
+    ```
+  </Step>
+</Steps>
+
+### 6. Build Configuration
+
+Review and customize `vite.config.ts` if needed:
+
+```typescript
+import path from 'path';
+import { defineConfig, loadEnv } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, '.', '');
+  return {
+    server: {
+      port: 3000,
+      host: '0.0.0.0',
+    },
+    plugins: [react()],
+    define: {
+      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+    },
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, '.'),
+      }
+    }
+  };
+});
+```
+
+<Accordion title="Configuration Options Explained">
+
+- **server.port**: Development server port (default: 3000)
+- **server.host**: Bind to all network interfaces for LAN access
+- **plugins**: Enables React Fast Refresh for hot reloading
+- **define**: Injects environment variables at build time
+- **resolve.alias**: Enables `@/` imports for cleaner paths
+
+</Accordion>
+
+## Running the Application
+
+### Development Mode
+
+Start the development server with hot reload:
+
+```bash
+npm run dev
+```
+
+Access the application:
+- **Local**: http://localhost:3000
+- **Network**: http://YOUR_IP:3000 (shown in terminal)
+
+### Production Build
+
+Create an optimized production build:
+
+```bash
+npm run build
+```
+
+This generates static files in the `dist/` directory.
+
+### Preview Production Build
+
+Test the production build locally:
+
+```bash
+npm run preview
+```
+
+## Deployment Options
+
+### Option 1: Netlify (Recommended)
+
+<Steps>
+  <Step title="Install Netlify CLI">
+    ```bash
+    npm install -g netlify-cli
+    ```
+  </Step>
+
+  <Step title="Login to Netlify">
+    ```bash
+    netlify login
+    ```
+  </Step>
+
+  <Step title="Initialize Netlify">
+    ```bash
+    netlify init
+    ```
+    
+    Follow the prompts to connect your repository.
+  </Step>
+
+  <Step title="Configure Build Settings">
+    Ensure `netlify.toml` exists (it should be in the repo):
+
+    ```toml
+    [build]
+      command = "npm run build"
+      publish = "dist"
+
+    [[redirects]]
+      from = "/*"
+      to = "/index.html"
+      status = 200
+    ```
+  </Step>
+
+  <Step title="Set Environment Variables">
+    In Netlify dashboard:
+    1. Go to Site settings → Environment variables
+    2. Add all variables from your `.env.local`
+    3. Save changes
+  </Step>
+
+  <Step title="Deploy">
+    ```bash
+    netlify deploy --prod
+    ```
+  </Step>
+</Steps>
+
+### Option 2: Vercel
+
+<Steps>
+  <Step title="Install Vercel CLI">
+    ```bash
+    npm install -g vercel
+    ```
+  </Step>
+
+  <Step title="Deploy">
+    ```bash
+    vercel
+    ```
+    
+    Follow prompts to configure and deploy.
+  </Step>
+
+  <Step title="Add Environment Variables">
+    In Vercel dashboard:
+    1. Go to Project Settings → Environment Variables
+    2. Add all `.env.local` variables
+    3. Redeploy: `vercel --prod`
+  </Step>
+</Steps>
+
+### Option 3: Traditional Hosting
+
+<Steps>
+  <Step title="Build the project">
+    ```bash
+    npm run build
+    ```
+  </Step>
+
+  <Step title="Upload dist/ folder">
+    Upload the contents of `dist/` to your web server.
+  </Step>
+
+  <Step title="Configure server">
+    Ensure your server redirects all routes to `index.html` for client-side routing.
+
+    **Nginx example**:
+    ```nginx
+    location / {
+      try_files $uri $uri/ /index.html;
+    }
+    ```
+
+    **Apache example**:
+    ```apache
+    <IfModule mod_rewrite.c>
+      RewriteEngine On
+      RewriteBase /
+      RewriteRule ^index\.html$ - [L]
+      RewriteCond %{REQUEST_FILENAME} !-f
+      RewriteCond %{REQUEST_FILENAME} !-d
+      RewriteRule . /index.html [L]
+    </IfModule>
+    ```
+  </Step>
+</Steps>
+
+## Post-Installation Setup
+
+### Initial Data Configuration
+
+<Steps>
+  <Step title="Access Admin Panel">
+    1. Open your deployed application
+    2. Scroll to the footer
+    3. Click "Admin" link
+  </Step>
+
+  <Step title="Configure Products">
+    1. Go to "Productos" tab
+    2. Click "+ Nuevo Producto"
+    3. Add your menu items with:
+       - Name
+       - Category
+       - Price
+       - Description
+       - Image URL (optional)
+  </Step>
+
+  <Step title="Set Business Hours">
+    1. Go to "Configuración" tab
+    2. Find "Horario" section
+    3. Set opening hours for each day
+    4. Add multiple time slots if needed (e.g., lunch and dinner)
+  </Step>
+
+  <Step title="Create Tables">
+    1. Go to "Mesas" tab
+    2. Add tables with:
+       - Name (e.g., "Mesa 1")
+       - Capacity
+       - Allow reservations checkbox
+  </Step>
+
+  <Step title="Configure Reservation Settings">
+    In "Configuración" → "Reservas":
+    - **Duration**: How long reservations last (e.g., 120 minutes)
+    - **Min booking time**: Minimum advance notice (e.g., 60 minutes)
+    - **Slot interval**: Reservation time increments (e.g., 30 minutes)
+  </Step>
+
+  <Step title="Activate Bots">
+    In "Configuración":
+    1. Find "Bot Web" section
+    2. Toggle to activate the web chat assistant
+    3. (Optional) Configure WhatsApp bot if using
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Build Errors
+
+<AccordionGroup>
+  <Accordion title="TypeScript errors during build">
+    **Symptom**: Type errors prevent compilation
+
+    **Solution**:
+    ```bash
+    # Clear node_modules and reinstall
+    rm -rf node_modules package-lock.json
+    npm install
+
+    # Check TypeScript version
+    npm list typescript
+    ```
+
+    Ensure TypeScript version is ~5.8.2 as specified in package.json.
+  </Accordion>
+
+  <Accordion title="Module resolution errors">
+    **Symptom**: Cannot find module '@/...' or similar
+
+    **Solution**: Verify `tsconfig.json` has correct paths:
+    ```json
+    {
+      "compilerOptions": {
+        "paths": {
+          "@/*": ["./*"]
+        }
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Runtime Errors
+
+<AccordionGroup>
+  <Accordion title="Firebase initialization failed">
+    **Symptom**: Console shows Firebase configuration errors
+
+    **Solution**:
+    1. Verify all `VITE_FIREBASE_*` variables in `.env.local`
+    2. Ensure no extra spaces or quotes in values
+    3. Restart dev server after environment changes
+    4. Check Firebase Console that Firestore is enabled
+  </Accordion>
+
+  <Accordion title="Gemini API errors (401, 403)">
+    **Symptom**: AI assistant doesn't respond, console shows authentication errors
+
+    **Solution**:
+    1. Verify `GEMINI_API_KEY` is correct
+    2. Check API key is enabled at [AI Studio](https://aistudio.google.com/apikey)
+    3. Ensure no billing/quota issues in Google Cloud Console
+    4. Test API key with a simple curl:
+    ```bash
+    curl "https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_API_KEY"
+    ```
+  </Accordion>
+
+  <Accordion title="Chat button disabled">
+    **Symptom**: Floating chat button appears grayed out
+
+    **Solution**: The Slice bot needs to be activated:
+    1. Go to Admin Panel
+    2. Navigate to "Configuración" tab
+    3. Find "Bot Web" section
+    4. Click toggle to activate
+  </Accordion>
+</AccordionGroup>
+
+### Performance Issues
+
+<AccordionGroup>
+  <Accordion title="Slow Firebase queries">
+    **Solution**: Add Firestore indexes for common queries:
+    1. Check browser console for index creation links
+    2. Click the link to auto-create the index
+    3. Or manually create in Firebase Console → Firestore → Indexes
+  </Accordion>
+
+  <Accordion title="Large bundle size">
+    **Solution**: 
+    - Verify tree-shaking is working
+    - Check for unnecessary imports
+    - Use production build: `npm run build`
+    - Consider code splitting for admin panel
+  </Accordion>
+</AccordionGroup>
+
+## Security Best Practices
+
+<Warning>
+  **Critical**: Implement these security measures before going to production:
+</Warning>
+
+1. **Environment Variables**
+   - Never commit `.env.local` to git
+   - Use different API keys for dev/prod
+   - Rotate keys periodically
+
+2. **Firestore Security Rules**
+   - Don't use test mode in production
+   - Implement proper authentication
+   - Validate data on write operations
+   - Use field-level security
+
+3. **API Rate Limiting**
+   - Consider implementing rate limiting for Gemini API
+   - Monitor usage in Google Cloud Console
+   - Set up billing alerts
+
+4. **CORS Configuration**
+   - Configure Firebase to only accept requests from your domain
+   - Set up proper CORS headers in Netlify Functions
+
+5. **Data Validation**
+   - Validate all user inputs
+   - Sanitize data before storing in Firestore
+   - Implement server-side validation for critical operations
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="/api/overview">
+    Explore the codebase APIs and services
+  </Card>
+  <Card title="WhatsApp Integration" icon="whatsapp" href="/integrations/whatsapp-bot">
+    Set up the WhatsApp bot for mobile customers
+  </Card>
+  <Card title="Admin Features" icon="shield" href="/admin/dashboard-overview">
+    Master the admin dashboard capabilities
+  </Card>
+  <Card title="Core Features" icon="sparkles" href="/features/ai-assistants">
+    Learn about AI assistants and other features
+  </Card>
+</CardGroup>
+
+## Support
+
+If you encounter issues not covered in this guide:
+
+1. Check browser console (F12) for error messages
+2. Review Firebase Console logs
+3. Verify environment variables are loaded correctly
+4. Test with a fresh installation
+
+<Note>
+  For production deployments, consider implementing monitoring and logging solutions to track errors and performance metrics.
+</Note>

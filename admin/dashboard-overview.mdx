@@ -1,0 +1,242 @@
+---
+title: 'Admin Dashboard Overview'
+description: 'Comprehensive guide to the Ai Studio Admin Dashboard - access, navigation, and key features for restaurant management'
+icon: 'gauge-high'
+---
+
+## Overview
+
+The Ai Studio Admin Dashboard is a comprehensive management interface that provides real-time control over all aspects of your restaurant operations. Built with React and Firebase, the dashboard offers live data synchronization, ensuring that all changes are instantly reflected across all connected devices.
+
+## Accessing the Dashboard
+
+### Authentication
+
+The admin dashboard requires authenticated access with proper user credentials. Access is restricted to users with Admin or Editor roles.
+
+<Info>
+  The dashboard implements real-time Firebase listeners that automatically sync data changes across all connected sessions.
+</Info>
+
+### Initial Load
+
+When you first access the dashboard, you'll see a loading screen while the system establishes connection to the Firebase database and loads all necessary data collections.
+
+## Dashboard Layout
+
+The admin dashboard uses a responsive sidebar layout that adapts to different screen sizes:
+
+### Desktop View
+- **Fixed Sidebar** (left): Always visible with navigation menu
+- **Header Bar** (top): Shows real-time connection status and notifications
+- **Main Content Area**: Displays the active panel content
+
+### Mobile View
+- **Collapsible Sidebar**: Accessed via hamburger menu
+- **Mobile Header**: Quick access to navigation and notifications
+- **Full-width Content**: Optimized for smaller screens
+
+<CardGroup cols={2}>
+  <Card title="Real-Time Sync" icon="arrows-rotate">
+    Live connection indicator shows when data is synchronized in real-time across all devices
+  </Card>
+  <Card title="Notification Center" icon="bell">
+    Centralized hub for new orders, upcoming reservations, and system alerts
+  </Card>
+</CardGroup>
+
+## Main Navigation Panels
+
+The dashboard provides access to nine core management areas through the sidebar navigation:
+
+<Tabs>
+  <Tab title="Orders">
+    ### Orders Panel
+    Manage incoming orders, update order status, and track deliveries. View order details including customer information, items ordered, payment status, and order history.
+    
+    **Key Features:**
+    - Real-time order notifications
+    - Status management workflow
+    - Order filtering and search
+    - Payment tracking
+  </Tab>
+  <Tab title="Reservations">
+    ### Reservations Panel
+    Handle table reservations, manage reservation status, and coordinate seating arrangements. View reservation timeline and customer details.
+    
+    **Key Features:**
+    - Reservation calendar view
+    - Status tracking (Pending, Confirmed, Seated, Completed)
+    - Automatic notifications for upcoming reservations
+    - Table assignment management
+  </Tab>
+  <Tab title="Tables">
+    ### Tables Panel
+    Manage table configuration, availability, and real-time status. View occupied tables, assign orders, and control table blocking.
+    
+    **Key Features:**
+    - Real-time table status
+    - Table capacity management
+    - Override controls (block/occupy)
+    - QR code generation for table access
+  </Tab>
+  <Tab title="Products">
+    ### Products Panel
+    Manage your menu items, categories, and promotions. Edit product details, pricing, images, and availability.
+    
+    **Key Features:**
+    - Product catalog management
+    - Category organization
+    - Promotion creation and management
+    - Bulk price adjustments
+    - Menu PDF generation
+  </Tab>
+</Tabs>
+
+<Tabs>
+  <Tab title="Customers">
+    ### Customers Panel
+    Track customer information, order history, and manage customer categories. Send bulk messages via WhatsApp to customer groups.
+    
+    **Key Features:**
+    - Customer database management
+    - Category-based organization
+    - Order history tracking
+    - WhatsApp bulk messaging
+  </Tab>
+  <Tab title="Users">
+    ### Users Panel
+    Manage system users with different permission levels. Create, edit, and delete user accounts for staff members.
+    
+    **Key Features:**
+    - User role management (Admin, Editor)
+    - Access tracking
+    - User authentication
+    - Email-based identification
+  </Tab>
+  <Tab title="Schedule">
+    ### Schedule Panel
+    Configure restaurant operating hours, manage special schedules, and set schedule exceptions for holidays or special events.
+    
+    **Key Features:**
+    - Weekly schedule configuration
+    - Time slot management
+    - Schedule exceptions
+    - Holiday management
+  </Tab>
+  <Tab title="Bots">
+    ### Bots Panel
+    Control AI-powered assistants including the Slice web chatbot and WhatsApp bot. Monitor bot metrics and chat history.
+    
+    **Key Features:**
+    - Bot activation/deactivation
+    - Performance metrics
+    - Chat history review
+    - QR code connection for WhatsApp
+  </Tab>
+</Tabs>
+
+## Header Features
+
+### Real-Time Connection Indicator
+
+The header displays a live connection status with a pulsing green dot, confirming that the dashboard is actively synced with the Firebase database:
+
+```
+🟢 Conectado en tiempo real
+```
+
+### Notification Center
+
+The notification center provides instant alerts for:
+
+<CardGroup cols={3}>
+  <Card title="New Orders" icon="cart-shopping">
+    Alerts when new orders are placed through any channel (Web, WhatsApp, Admin)
+  </Card>
+  <Card title="Reservations" icon="calendar-check">
+    Notifications for upcoming reservations (within 15 minutes)
+  </Card>
+  <Card title="System Events" icon="circle-info">
+    General system notifications and important updates
+  </Card>
+</CardGroup>
+
+## Common Workflows
+
+### Daily Operations
+
+1. **Check Dashboard Status** - Verify real-time connection is active
+2. **Review Notifications** - Check for pending orders and upcoming reservations
+3. **Manage Orders** - Process new orders and update status as they progress
+4. **Handle Reservations** - Confirm bookings and seat customers as they arrive
+5. **Monitor Tables** - Track table occupancy and manage availability
+
+### Menu Management
+
+1. Navigate to **Products** panel
+2. Add/edit products and categories
+3. Create promotional bundles
+4. Adjust pricing using bulk operations
+5. Generate updated menu PDFs
+
+### Staff Management
+
+1. Navigate to **Users** panel
+2. Create user accounts with appropriate roles
+3. Monitor last access times
+4. Update permissions as needed
+
+## Theme Customization
+
+The dashboard supports both light and dark themes. Use the theme toggle in the sidebar footer to switch between modes. Your preference is saved locally and persists across sessions.
+
+<Note>
+  All timestamps in the dashboard are displayed in Argentine locale format (es-AR) with timezone-aware date formatting.
+</Note>
+
+## Data Synchronization
+
+The dashboard implements real-time listeners for all critical data collections:
+
+- **Orders**: Live order updates and status changes
+- **Reservations**: Real-time reservation modifications
+- **Products**: Instant menu updates
+- **Categories**: Category structure changes
+- **Customers**: Customer database updates
+- **Tables**: Live table status updates
+- **Users**: User account changes
+- **Schedule**: Operating hours updates
+- **Bot Metrics**: AI assistant performance data
+- **Chat History**: Conversation logs
+
+<Info>
+  The dashboard caches data locally using `localStorage` for improved performance and offline resilience. When Firebase is unavailable, cached data is used automatically.
+</Info>
+
+## Performance Features
+
+### Optimistic Updates
+
+Many operations provide immediate visual feedback while Firebase processes changes in the background, ensuring a responsive user experience.
+
+### Pagination
+
+Large datasets (orders, products, customers) are paginated with 10 items per page to maintain optimal performance.
+
+### Responsive Tables
+
+All data tables adapt to mobile screens with a card-based layout, ensuring usability on any device.
+
+## Settings & Configuration
+
+Access the **Settings** panel to configure:
+
+- Location and delivery radius
+- Location validation settings
+- Reservation duration and timing rules
+- Table management preferences
+
+<Card title="Next Steps" icon="arrow-right">
+  Continue to [User Management](/admin/user-management) to learn about role-based access control and user administration.
+</Card>

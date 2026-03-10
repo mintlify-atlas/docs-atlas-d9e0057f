@@ -1,0 +1,489 @@
+---
+title: 'Notification System'
+description: 'Configure and manage real-time notifications for orders, reservations, and general events'
+---
+
+## Overview
+
+The notification system provides real-time alerts for important events in the Ai Studio application. Notifications are categorized by type (order, reservation, general) and stored locally with read/unread status tracking.
+
+## Notification Interface
+
+```typescript types.ts
+export interface Notification {
+    id: string;
+    message: string;
+    type: 'order' | 'reservation' | 'general';
+    relatedId?: string;
+    createdAt: string;
+    isRead: boolean;
+}
+```
+
+## Configuration Parameters
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the notification
+  
+  Auto-generated in format: `NOTIF-{timestamp}-{random}`
+  
+  Example: `"NOTIF-1709654321-xyz789"`
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  The notification message to display to the user
+  
+  Example: `"New order received from John Doe"`
+</ParamField>
+
+<ParamField path="type" type="'order' | 'reservation' | 'general'" required>
+  Notification category
+  
+  - `order`: Related to order events (new orders, status changes)
+  - `reservation`: Related to reservation events (new bookings, cancellations)
+  - `general`: System notifications and other events
+</ParamField>
+
+<ParamField path="relatedId" type="string" optional>
+  ID of the related entity (order ID, reservation ID, etc.)
+  
+  Used to prevent duplicate notifications and link to source data.
+  
+  Example: `"ORD-1709654321-abc123"`
+</ParamField>
+
+<ParamField path="createdAt" type="string" required>
+  ISO timestamp of when the notification was created
+  
+  Auto-generated on creation.
+  
+  Example: `"2026-03-10T15:30:00.000Z"`
+</ParamField>
+
+<ParamField path="isRead" type="boolean" required>
+  Whether the notification has been marked as read
+  
+  Defaults to `false` on creation.
+</ParamField>
+
+## Creating Notifications
+
+### Add a New Notification
+
+Create a notification with automatic deduplication:
+
+```typescript
+import { addNotification } from './services/notificationService';
+
+const notification = addNotification({
+  message: 'New order #1234 received',
+  type: 'order',
+  relatedId: 'ORD-1709654321-abc123'
+});
+
+if (notification) {
+  console.log('Notification created:', notification.id);
+} else {
+  console.log('Duplicate notification prevented');
+}
+```
+
+<Note>
+  If a notification with the same `relatedId` already exists, `addNotification()` returns `null` to prevent duplicates.
+</Note>
+
+### Notification Examples
+
+**Order Notification:**
+```typescript
+addNotification({
+  message: `Order #${orderId} is ready for pickup`,
+  type: 'order',
+  relatedId: orderId
+});
+```
+
+**Reservation Notification:**
+```typescript
+addNotification({
+  message: `New reservation for ${customerName} at ${time}`,
+  type: 'reservation',
+  relatedId: reservationId
+});
+```
+
+**General Notification:**
+```typescript
+addNotification({
+  message: 'System maintenance scheduled for tonight',
+  type: 'general'
+  // No relatedId for general notifications
+});
+```
+
+## Retrieving Notifications
+
+### Get All Notifications
+
+Retrieve all notifications sorted by creation date (newest first):
+
+```typescript
+import { getNotifications } from './services/notificationService';
+
+const notifications = getNotifications();
+console.log(`Total notifications: ${notifications.length}`);
+
+notifications.forEach(notif => {
+  console.log(`[${notif.type}] ${notif.message} - Read: ${notif.isRead}`);
+});
+```
+
+The service automatically sorts notifications:
+
+```typescript notificationService.ts
+export const getNotifications = (): Notification[] => {
+  try {
+    const notificationsJson = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
+    const notifications = notificationsJson ? JSON.parse(notificationsJson) as Notification[] : [];
+    return notifications.sort((a, b) => 
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  } catch (error) {
+    console.error("Failed to parse notifications from localStorage", error);
+    return [];
+  }
+};
+```
+
+### Get Unread Count
+
+Get the number of unread notifications:
+
+```typescript
+import { getUnreadCount } from './services/notificationService';
+
+const unreadCount = getUnreadCount();
+console.log(`You have ${unreadCount} unread notifications`);
+
+// Update UI badge
+document.getElementById('notif-badge').textContent = unreadCount.toString();
+```
+
+### Filter by Type
+
+Filter notifications by category:
+
+```typescript
+import { getNotifications } from './services/notificationService';
+
+const allNotifications = getNotifications();
+
+const orderNotifications = allNotifications.filter(n => n.type === 'order');
+const reservationNotifications = allNotifications.filter(n => n.type === 'reservation');
+const generalNotifications = allNotifications.filter(n => n.type === 'general');
+
+console.log(`Orders: ${orderNotifications.length}`);
+console.log(`Reservations: ${reservationNotifications.length}`);
+console.log(`General: ${generalNotifications.length}`);
+```
+
+## Managing Read Status
+
+### Mark Single Notification as Read
+
+Mark a specific notification as read:
+
+```typescript
+import { markAsRead } from './services/notificationService';
+
+const notificationId = 'NOTIF-1709654321-xyz789';
+markAsRead(notificationId);
+
+console.log('Notification marked as read');
+```
+
+### Mark All Notifications as Read
+
+Mark all notifications as read at once:
+
+```typescript
+import { markAllAsRead } from './services/notificationService';
+
+markAllAsRead();
+console.log('All notifications marked as read');
+```
+
+Useful when implementing a "Mark all as read" button:
+
+```typescript
+function handleMarkAllRead() {
+  markAllAsRead();
+  
+  // Refresh UI
+  const unreadCount = getUnreadCount();
+  updateNotificationBadge(unreadCount);
+}
+```
+
+## Deleting Notifications
+
+### Delete Single Notification
+
+Remove a specific notification:
+
+```typescript
+import { deleteNotification } from './services/notificationService';
+
+const notificationId = 'NOTIF-1709654321-xyz789';
+deleteNotification(notificationId);
+
+console.log('Notification deleted');
+```
+
+### Clear All Notifications
+
+Delete all notifications:
+
+```typescript
+import { clearAllNotifications } from './services/notificationService';
+
+clearAllNotifications();
+console.log('All notifications cleared');
+```
+
+<Warning>
+  `clearAllNotifications()` permanently removes all notifications. This action cannot be undone.
+</Warning>
+
+## Notification Lifecycle
+
+### Automatic Management
+
+The notification system includes automatic features:
+
+**Duplicate Prevention:**
+```typescript notificationService.ts
+export const addNotification = (notificationData: Omit<Notification, 'id' | 'createdAt' | 'isRead'>): Notification | null => {
+  const existingNotifications = getNotifications();
+
+  // Prevent duplicate notifications for the same event
+  if (notificationData.relatedId && existingNotifications.some(n => n.relatedId === notificationData.relatedId)) {
+    return null;
+  }
+  
+  // ... create notification
+};
+```
+
+**Maximum Limit (50 notifications):**
+```typescript notificationService.ts
+const updatedNotifications = [newNotification, ...existingNotifications].slice(0, 50);
+persistNotifications(updatedNotifications);
+```
+
+Older notifications are automatically removed when the limit is reached.
+
+## Storage Details
+
+Notifications are stored in browser localStorage:
+
+```typescript
+const NOTIFICATIONS_STORAGE_KEY = 'pizzeria-notifications';
+```
+
+### Persistence
+
+All notification operations persist to localStorage:
+
+```typescript notificationService.ts
+const persistNotifications = (notifications: Notification[]): void => {
+  try {
+    localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(notifications));
+  } catch (error) {
+    console.error("Failed to save notifications to localStorage", error);
+  }
+};
+```
+
+<Note>
+  Notifications are stored locally and will be cleared if the user clears browser data. Consider implementing server-side storage for critical notifications.
+</Note>
+
+## Real-Time Integration
+
+Integrate notifications with order and reservation systems:
+
+### Order Status Changes
+
+```typescript
+import { addNotification } from './services/notificationService';
+import type { Order } from './types';
+
+function onOrderStatusChange(order: Order) {
+  const statusMessages = {
+    'Confirmado': `Order #${order.id} confirmed`,
+    'En Preparación': `Order #${order.id} is being prepared`,
+    'Listo para Retirar/Entregar': `Order #${order.id} is ready`,
+    'Completado (Entregado)': `Order #${order.id} completed`,
+  };
+  
+  const message = statusMessages[order.status];
+  if (message) {
+    addNotification({
+      message,
+      type: 'order',
+      relatedId: order.id
+    });
+  }
+}
+```
+
+### New Reservations
+
+```typescript
+import { addNotification } from './services/notificationService';
+import type { Reservation } from './types';
+
+function onNewReservation(reservation: Reservation) {
+  addNotification({
+    message: `New reservation: ${reservation.customerName} for ${reservation.guests} guests`,
+    type: 'reservation',
+    relatedId: reservation.id
+  });
+}
+```
+
+## UI Implementation Example
+
+Example notification list component:
+
+```typescript
+import { getNotifications, markAsRead, deleteNotification } from './services/notificationService';
+import { useEffect, useState } from 'react';
+
+function NotificationList() {
+  const [notifications, setNotifications] = useState(getNotifications());
+  
+  useEffect(() => {
+    // Refresh every 5 seconds
+    const interval = setInterval(() => {
+      setNotifications(getNotifications());
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, []);
+  
+  const handleRead = (id: string) => {
+    markAsRead(id);
+    setNotifications(getNotifications());
+  };
+  
+  const handleDelete = (id: string) => {
+    deleteNotification(id);
+    setNotifications(getNotifications());
+  };
+  
+  return (
+    <div>
+      {notifications.map(notif => (
+        <div key={notif.id} className={notif.isRead ? 'read' : 'unread'}>
+          <span className={`badge badge-${notif.type}`}>{notif.type}</span>
+          <p>{notif.message}</p>
+          <small>{new Date(notif.createdAt).toLocaleString()}</small>
+          {!notif.isRead && (
+            <button onClick={() => handleRead(notif.id)}>Mark Read</button>
+          )}
+          <button onClick={() => handleDelete(notif.id)}>Delete</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+## Best Practices
+
+<Accordion title="Use Meaningful Messages">
+  Craft notification messages that provide clear, actionable information:
+  
+  ```typescript
+  // Good
+  addNotification({
+    message: 'Order #1234 from Table 5 is ready to serve',
+    type: 'order',
+    relatedId: orderId
+  });
+  
+  // Avoid
+  addNotification({
+    message: 'Order ready',
+    type: 'order'
+  });
+  ```
+</Accordion>
+
+<Accordion title="Always Provide relatedId for Orders and Reservations">
+  This enables duplicate prevention and linking:
+  
+  ```typescript
+  addNotification({
+    message: `Reservation confirmed for ${name}`,
+    type: 'reservation',
+    relatedId: reservation.id // Always include for tracking
+  });
+  ```
+</Accordion>
+
+<Accordion title="Implement Notification Sound/Visual Alerts">
+  Enhance user experience with audio or visual cues:
+  
+  ```typescript
+  function notifyWithSound(notificationData) {
+    const notification = addNotification(notificationData);
+    
+    if (notification && notification.type === 'order') {
+      // Play sound for important notifications
+      const audio = new Audio('/notification-sound.mp3');
+      audio.play();
+    }
+    
+    return notification;
+  }
+  ```
+</Accordion>
+
+<Accordion title="Regularly Clean Old Notifications">
+  While the system limits to 50 notifications, implement custom cleanup:
+  
+  ```typescript
+  function cleanupOldNotifications(daysToKeep: number = 7) {
+    const notifications = getNotifications();
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+    
+    const recentNotifications = notifications.filter(n => 
+      new Date(n.createdAt) > cutoffDate
+    );
+    
+    // Save filtered list
+    localStorage.setItem('pizzeria-notifications', JSON.stringify(recentNotifications));
+  }
+  ```
+</Accordion>
+
+## Error Handling
+
+The notification service includes built-in error handling:
+
+```typescript
+// Safe retrieval with fallback
+const notifications = getNotifications(); // Returns [] on error
+
+// Check for null on add (duplicate prevention)
+const notification = addNotification({ ... });
+if (!notification) {
+  console.log('Notification was not created (duplicate)');
+}
+```
+
+All localStorage operations are wrapped in try-catch blocks to prevent crashes from quota exceeded or other storage errors.

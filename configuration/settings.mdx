@@ -1,0 +1,263 @@
+---
+title: 'Application Settings'
+description: 'Configure core application settings including location, delivery radius, and reservation parameters'
+---
+
+## Overview
+
+The Ai Studio application settings control essential business configuration such as location validation, delivery radius, and reservation management. Settings are stored in Firestore and cached locally for performance.
+
+## AppSettings Interface
+
+Application settings are defined by the `AppSettings` interface:
+
+```typescript types.ts
+export interface AppSettings {
+  location?: {
+    lat: number;
+    lng: number;
+    address?: string;
+  };
+  deliveryRadius: number; // in meters
+  enableLocationValidation: boolean;
+}
+```
+
+## Configuration Parameters
+
+### Location Settings
+
+<ParamField path="location" type="object" optional>
+  The business location coordinates and address
+  
+  <Accordion title="Location Properties">
+    <ParamField path="lat" type="number" required>
+      Latitude coordinate of the business location
+      
+      Example: `40.7128`
+    </ParamField>
+    
+    <ParamField path="lng" type="number" required>
+      Longitude coordinate of the business location
+      
+      Example: `-74.0060`
+    </ParamField>
+    
+    <ParamField path="address" type="string" optional>
+      Human-readable address string
+      
+      Example: `"123 Main Street, New York, NY"`
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+### Delivery Configuration
+
+<ParamField path="deliveryRadius" type="number" required>
+  Maximum delivery distance in meters from the business location
+  
+  This value determines the service area for delivery orders. Customer addresses beyond this radius will be rejected.
+  
+  Example: `5000` (5 kilometers)
+</ParamField>
+
+<ParamField path="enableLocationValidation" type="boolean" required>
+  Enable or disable location-based delivery validation
+  
+  When `true`, customer addresses are validated against the delivery radius. When `false`, all delivery addresses are accepted.
+  
+  <Warning>
+    Disabling location validation may result in orders being placed outside your serviceable area.
+  </Warning>
+</ParamField>
+
+## Reservation Settings
+
+Reservation-specific settings are managed through the `ReservationSettings` interface:
+
+```typescript types.ts
+export interface ReservationSettings {
+  duration: number;
+  minBookingTime: number;
+  initialBlockTime: number;
+  extensionBlockTime: number;
+  modificationLockTime: number;
+  slotInterval: number;
+}
+```
+
+### Reservation Parameters
+
+<ParamField path="duration" type="number" required>
+  Default duration for each reservation in minutes
+  
+  Example: `120` (2 hours)
+</ParamField>
+
+<ParamField path="minBookingTime" type="number" required>
+  Minimum advance booking time required in minutes
+  
+  Prevents customers from making last-minute reservations that cannot be fulfilled.
+  
+  Example: `60` (1 hour in advance)
+</ParamField>
+
+<ParamField path="initialBlockTime" type="number" required>
+  Time in minutes to block a table before the reservation starts
+  
+  Allows for table preparation and ensures availability.
+  
+  Example: `15` (15 minutes before)
+</ParamField>
+
+<ParamField path="extensionBlockTime" type="number" required>
+  Time in minutes to block a table after the reservation ends
+  
+  Provides buffer time for table turnover and cleaning.
+  
+  Example: `30` (30 minutes after)
+</ParamField>
+
+<ParamField path="modificationLockTime" type="number" required>
+  Time in minutes before a reservation when modifications are locked
+  
+  Prevents last-minute changes that could disrupt operations.
+  
+  Example: `30` (30 minutes before)
+</ParamField>
+
+<ParamField path="slotInterval" type="number" required>
+  Time interval in minutes between available reservation slots
+  
+  Example: `30` (slots at :00 and :30)
+</ParamField>
+
+## Managing Settings
+
+### Retrieving Settings
+
+Fetch the current application settings from Firestore:
+
+```typescript
+import { getSettings } from './services/settingsService';
+
+const settings = await getSettings();
+
+if (settings) {
+  console.log('Delivery radius:', settings.deliveryRadius);
+  console.log('Location validation:', settings.enableLocationValidation);
+  
+  if (settings.location) {
+    console.log('Business location:', settings.location);
+  }
+}
+```
+
+<Note>
+  The `getSettings()` function returns `null` if no settings document exists in Firestore.
+</Note>
+
+### Saving Settings
+
+Update application settings:
+
+```typescript
+import { saveSettings } from './services/settingsService';
+import type { AppSettings } from './types';
+
+const newSettings: AppSettings = {
+  location: {
+    lat: 40.7128,
+    lng: -74.0060,
+    address: '123 Main Street, New York, NY'
+  },
+  deliveryRadius: 5000, // 5km
+  enableLocationValidation: true
+};
+
+try {
+  await saveSettings(newSettings);
+  console.log('Settings saved successfully');
+} catch (error) {
+  console.error('Failed to save settings:', error);
+}
+```
+
+<Note>
+  The `saveSettings()` function uses Firestore's `merge` option, so you can update partial settings without overwriting the entire document.
+</Note>
+
+### Storage Location
+
+Settings are stored in Firestore at:
+
+```
+Collection: settings
+Document ID: general
+```
+
+```typescript settingsService.ts
+const SETTINGS_COLLECTION = 'settings';
+const SETTINGS_DOC_ID = 'general';
+```
+
+## Local Storage Management
+
+The settings service provides a utility to clear local storage while preserving specific keys:
+
+```typescript
+import { clearLocalStorage } from './services/settingsService';
+
+// Clear all localStorage except theme settings
+clearLocalStorage();
+```
+
+<Warning>
+  Calling `clearLocalStorage()` will trigger a page reload to fetch fresh data from Firebase.
+</Warning>
+
+The function preserves specific keys (e.g., `'pizzeria-theme'`) to maintain user preferences across cache clears.
+
+## Error Handling
+
+Both `getSettings()` and `saveSettings()` include error handling:
+
+- **getSettings()**: Returns `null` on error and logs to console
+- **saveSettings()**: Throws an error that should be caught by the caller
+
+```typescript
+try {
+  const settings = await getSettings();
+  if (!settings) {
+    // Handle missing settings - initialize with defaults
+  }
+} catch (error) {
+  console.error('Error fetching settings:', error);
+}
+```
+
+## Best Practices
+
+<Accordion title="Validate Location Coordinates">
+  Ensure latitude is between -90 and 90, and longitude is between -180 and 180.
+  
+  ```typescript
+  const isValidLocation = (lat: number, lng: number): boolean => {
+    return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+  };
+  ```
+</Accordion>
+
+<Accordion title="Set Reasonable Delivery Radius">
+  Consider your delivery capabilities when setting the radius. A typical restaurant might use:
+  - Urban area: 2000-3000 meters
+  - Suburban area: 5000-8000 meters
+  - Rural area: 10000+ meters
+</Accordion>
+
+<Accordion title="Configure Reservation Times Appropriately">
+  Balance customer convenience with operational efficiency:
+  - `duration`: 90-120 minutes for typical dining
+  - `minBookingTime`: 60-120 minutes to prepare
+  - `slotInterval`: 15-30 minutes for flexibility
+</Accordion>

@@ -1,0 +1,569 @@
+---
+title: 'Menu & Product Management'
+description: 'Complete product catalog system with categories, pricing, and bulk operations'
+icon: 'utensils'
+---
+
+## Overview
+
+The Menu Management system handles all products, categories, and promotions. It provides comprehensive tools for managing your catalog, including bulk price adjustments, CSV import/export, and real-time synchronization across all channels.
+
+### Key Benefits
+
+- **Organized Categories**: Group products with visual colors and images
+- **Flexible Pricing**: Individual product pricing with bulk adjustment tools
+- **Promotion Support**: Bundle multiple products with special pricing
+- **Bulk Operations**: Import hundreds of products via CSV
+- **Real-Time Sync**: Changes appear instantly in AI assistants and customer interfaces
+
+## Product Data Structure
+
+### Product Interface
+
+From `types.ts:15-22`:
+
+```typescript
+export interface Product {
+  id: string;              // Format: PROD-{timestamp}-{random}
+  category: string;        // Category name (not ID)
+  name: string;
+  description?: string;    // Optional ingredients or details
+  price: string;          // Stored as string for precision
+  imageUrl?: string;      // Optional product image
+}
+```
+
+### Category Interface
+
+From `types.ts:24-29`:
+
+```typescript
+export interface Category {
+  id: string;           // Format: CAT-{timestamp}-{random}
+  name: string;         // Display name (e.g., "Pizzas", "Empanadas")
+  imageUrl?: string;    // Category image for UI
+  color?: string;       // Hex color for visual organization
+}
+```
+
+### Promotion Interface
+
+From `types.ts:37-45`:
+
+```typescript
+export interface Promotion {
+  id: string;                    // Format: PROMO-{timestamp}-{random}
+  name: string;                  // Promotion name (e.g., "Combo Familiar")
+  items: PromotionItem[];        // Products included
+  price: number;                 // Special bundled price
+  isActive: boolean;             // Enable/disable without deleting
+  createdAt: string;            // ISO timestamp
+  imageUrl?: string;            // Promotion image
+}
+
+export interface PromotionItem {
+  productId: string;    // Reference to Product.id
+  name: string;         // Product name (denormalized for display)
+  quantity: number;     // How many of this product
+}
+```
+
+## Core Service Functions
+
+### Managing Products
+
+From `services/productService.ts`:
+
+#### Creating Products
+
+```typescript
+addProduct(
+  productData: Omit<Product, 'id'>
+): Promise<Product>
+```
+
+**Example**:
+
+```typescript
+import { addProduct } from './services/productService';
+
+const newProduct = await addProduct({
+  category: 'Pizzas',
+  name: 'Pizza 4 Quesos',
+  description: 'Muzzarella, provolone, roquefort, parmesano',
+  price: '10500',
+  imageUrl: 'https://example.com/4quesos.jpg'
+});
+
+// Returns product with auto-generated ID
+console.log(newProduct.id);  // "PROD-1710087654321-abc5d"
+```
+
+#### Updating Products
+
+```typescript
+updateProduct(updatedProduct: Product): Promise<Product>
+```
+
+**Example**:
+
+```typescript
+import { updateProduct, getProductsFromCache } from './services/productService';
+
+const products = getProductsFromCache();
+const pizza = products.find(p => p.name === 'Pizza 4 Quesos');
+
+if (pizza) {
+  await updateProduct({
+    ...pizza,
+    price: '11000',  // Price increase
+    description: 'Muzzarella, provolone, roquefort, parmesano, aceitunas'
+  });
+}
+```
+
+#### Retrieving Products
+
+```typescript
+// Get all products from cache
+getProductsFromCache(): Product[]
+
+// Fetch from Firebase and update cache
+fetchAndCacheProducts(): Promise<Product[]>
+```
+
+### Managing Categories
+
+From `services/categoryService.ts`:
+
+```typescript
+// Add category
+addCategory(categoryData: Omit<Category, 'id'>): Promise<Category>
+
+// Update category
+updateCategory(updatedCategory: Category): Promise<Category>
+
+// Delete category
+deleteCategory(categoryId: string): Promise<void>
+
+// Get all categories
+getCategoriesFromCache(): Category[]
+```
+
+**Example**:
+
+```typescript
+import { addCategory } from './services/categoryService';
+
+const newCategory = await addCategory({
+  name: 'Bebidas',
+  color: '#3498db',
+  imageUrl: 'https://example.com/bebidas.jpg'
+});
+```
+
+## Bulk Operations
+
+### Price Adjustments
+
+From `services/productService.ts:165-214`:
+
+```typescript
+adjustProductPrices(
+  targetCategory: string,      // Category name or 'all'
+  percentage: number,           // e.g., 10 for 10% increase, -5 for 5% decrease
+  rounding: 'none' | 'integer' | '10' | '50' | '100'
+): Promise<void>
+```
+
+**Example Usage**:
+
+```typescript
+import { adjustProductPrices } from './services/productService';
+
+// Increase all pizza prices by 15%, round to nearest 100
+await adjustProductPrices('Pizzas', 15, '100');
+
+// Before: $9200 → After: $10600 (9200 * 1.15 = 10580 → rounded to 10600)
+
+// Decrease all prices by 10%, round to nearest 50
+await adjustProductPrices('all', -10, '50');
+```
+
+**Rounding Options**:
+
+<Tabs>
+  <Tab title="none">
+    No rounding, preserves decimals.
+    
+    ```typescript
+    price: 9200 * 1.15 = 10580.00
+    ```
+  </Tab>
+  
+  <Tab title="integer">
+    Rounds to nearest whole number.
+    
+    ```typescript
+    price: 10580.67 → 10581
+    ```
+  </Tab>
+  
+  <Tab title="10">
+    Rounds to nearest 10.
+    
+    ```typescript
+    price: 10580 → 10580
+    price: 10585 → 10590
+    ```
+  </Tab>
+  
+  <Tab title="50">
+    Rounds to nearest 50.
+    
+    ```typescript
+    price: 10580 → 10600
+    price: 10520 → 10500
+    ```
+  </Tab>
+  
+  <Tab title="100">
+    Rounds to nearest 100.
+    
+    ```typescript
+    price: 10580 → 10600
+    price: 10540 → 10500
+    ```
+  </Tab>
+</Tabs>
+
+### CSV Import
+
+From `services/productService.ts:216-256`:
+
+```typescript
+importProducts(
+  productsToImport: Omit<Product, 'id' | 'imageUrl'>[]
+): Promise<{ added: number; updated: number; errors: number }>
+```
+
+**How It Works**:
+
+1. **Match Existing Products**: Checks if product with same name and category exists
+2. **Update or Add**: Updates existing products or creates new ones
+3. **Batch Write**: Uses Firebase batch for performance
+4. **Return Statistics**: Reports how many products were added, updated, or had errors
+
+**Example CSV Structure**:
+
+```csv
+name,category,price,description
+Pizza Muzzarella,Pizzas,9200,Muzzarella y salsa de tomate
+Pizza Napolitana,Pizzas,9700,Muzzarella con tomate y ajo
+Empanada Carne,Empanadas,600,Carne cortada a cuchillo
+```
+
+**Implementation**:
+
+```typescript
+import { importProducts } from './services/productService';
+
+// Parse CSV file
+const productsData = [
+  { name: 'Pizza Muzzarella', category: 'Pizzas', price: '9200', description: '...' },
+  { name: 'Pizza Napolitana', category: 'Pizzas', price: '9700', description: '...' },
+  // ...
+];
+
+const result = await importProducts(productsData);
+
+console.log(`Added: ${result.added}`);
+console.log(`Updated: ${result.updated}`);
+console.log(`Errors: ${result.errors}`);
+```
+
+<Warning>
+**Import Validation**:
+
+- Products must have `name`, `category`, and `price`
+- Category must exist or product will error
+- Duplicate names in same category will update existing product
+- Invalid data increments error count but doesn't fail entire import
+</Warning>
+
+## Initial Menu Data
+
+From `services/productService.ts:16-51` and `services/categoryService.ts:14-20`:
+
+The system includes starter data:
+
+### Default Categories
+
+```typescript
+const initialCategories = [
+  { name: 'Pizzas', color: '#E53935', imageUrl: '...' },
+  { name: 'Empanadas', color: '#FFA000', imageUrl: '...' },
+  { name: 'Hamburguesas', color: '#795548', imageUrl: '...' },
+  { name: 'Lomitos', color: '#8D6E63', imageUrl: '...' },
+  { name: 'Sandwichs', color: '#FBC02D', imageUrl: '...' }
+];
+```
+
+### Sample Products
+
+```typescript
+const initialMenu = {
+  "Pizzas": [
+    { name: "Muzzarella", price: "9200", description: "Muzzarella, salsa, oregano, y aceitunas verdes" },
+    { name: "Napolitana", price: "9700", description: "Muzzarella, salsa, ajies, orégano y aceitunas verdes" },
+    // ... more pizzas
+  ],
+  "Empanadas": [
+    { name: "Empanadas de Carne", price: "600" },
+    { name: "Empanadas Queso", price: "500" },
+    // ...
+  ],
+  // ... more categories
+};
+```
+
+<Note>
+This initial data is loaded from localStorage on first run. Replace it with your own menu before going live.
+</Note>
+
+## User Workflows
+
+### Adding a New Product (Admin)
+
+<Steps>
+  <Step title="Navigate to Products Panel">
+    Click "Productos" in admin sidebar.
+  </Step>
+  
+  <Step title="Select Category">
+    Filter by category or create new category first if needed.
+  </Step>
+  
+  <Step title="Click 'Nuevo Producto'">
+    Opens product creation form.
+  </Step>
+  
+  <Step title="Fill Details">
+    - **Name**: Product name (required)
+    - **Category**: Select from dropdown (required)
+    - **Price**: Numeric value (required)
+    - **Description**: Ingredients or details (optional)
+    - **Image URL**: Product photo (optional)
+  </Step>
+  
+  <Step title="Save Product">
+    Product added to Firebase, appears immediately in:
+    - Admin panel product list
+    - AI assistant menus
+    - Customer ordering interfaces
+  </Step>
+</Steps>
+
+### Bulk Price Update (Admin)
+
+<Steps>
+  <Step title="Open Price Adjustment Tool">
+    In ProductsPanel, click "Ajustar Precios" button.
+  </Step>
+  
+  <Step title="Select Target">
+    Choose specific category or "all categories".
+  </Step>
+  
+  <Step title="Enter Percentage">
+    - Positive number for increase (e.g., 10 for +10%)
+    - Negative number for decrease (e.g., -5 for -5%)
+  </Step>
+  
+  <Step title="Choose Rounding">
+    Select rounding method (none, integer, 10, 50, 100) based on your pricing strategy.
+  </Step>
+  
+  <Step title="Confirm and Apply">
+    System:
+    - Calculates new prices
+    - Shows preview
+    - Applies changes in batch
+    - Updates all products simultaneously
+  </Step>
+</Steps>
+
+### Importing Products from CSV (Admin)
+
+<Steps>
+  <Step title="Prepare CSV File">
+    Create CSV with columns: `name`, `category`, `price`, `description`
+    
+    Ensure categories already exist in system.
+  </Step>
+  
+  <Step title="Open Import Tool">
+    In ProductsPanel, click "Importar" button.
+  </Step>
+  
+  <Step title="Upload CSV">
+    Select file from computer.
+  </Step>
+  
+  <Step title="Review Results">
+    System shows:
+    - Number of products added
+    - Number of products updated (duplicates)
+    - Number of errors (validation failures)
+  </Step>
+  
+  <Step title="Verify in Product List">
+    Check that products appear correctly with proper categories and pricing.
+  </Step>
+</Steps>
+
+## AI Assistant Integration
+
+From `services/geminiService.ts:13-29`:
+
+The AI assistants (Slice web chat and WhatsApp bot) automatically have access to the current menu:
+
+```typescript
+const generateMenuForPrompt = (): string => {
+  const products = getProductsFromCache();
+  const groupedMenu = products.reduce((acc, product) => {
+    const { category, name, price, description } = product;
+    if (!acc[category]) {
+      acc[category] = [];
+    }
+    acc[category].push({
+      producto: name,
+      precio: price,
+      ...(description && { ingredientes: description })
+    });
+    return acc;
+  }, {} as Record<string, {producto: string, precio: string, ingredientes?: string}[]>);
+
+  return JSON.stringify(groupedMenu, null, 2);
+};
+```
+
+**Result**: When you update a product in the admin panel, AI assistants immediately use the new data in their next conversation.
+
+**Example AI Prompt Injection**:
+
+```
+Nuestro menú incluye:
+{
+  "Pizzas": [
+    {
+      "producto": "Muzzarella",
+      "precio": "9200",
+      "ingredientes": "Muzzarella, salsa, oregano, y aceitunas verdes"
+    },
+    ...
+  ],
+  "Empanadas": [...],
+  ...
+}
+```
+
+## Promotions
+
+Promotions allow bundling multiple products at a special price.
+
+### Creating Promotions
+
+From `services/promotionService.ts`:
+
+```typescript
+import { addPromotion } from './services/promotionService';
+
+const newPromo = await addPromotion({
+  name: 'Combo Familiar',
+  items: [
+    { productId: 'PROD-123', name: 'Pizza Muzzarella', quantity: 2 },
+    { productId: 'PROD-456', name: 'Coca Cola 2L', quantity: 1 }
+  ],
+  price: 18000,  // Discounted from individual prices
+  isActive: true,
+  imageUrl: 'https://example.com/combo.jpg'
+});
+```
+
+### Using Promotions in Orders
+
+From `types.ts:79-85`:
+
+```typescript
+const orderItem: OrderItem = {
+  name: 'Combo Familiar',
+  quantity: 1,
+  price: 18000,
+  isPromotion: true,      // Marks this as a promotion
+  itemId: 'PROMO-123'     // References Promotion.id
+};
+```
+
+## Real-Time Synchronization
+
+From `components/AdminDashboard.tsx:106-116`:
+
+```typescript
+const unsubProducts = onSnapshot(
+  collection(db, 'Products'),
+  (querySnapshot) => {
+    const products = querySnapshot.docs.map(doc => doc.data() as Product);
+    updateProductsCache(products);
+    setDataTimestamp(Date.now());
+  }
+);
+
+const unsubCategories = onSnapshot(
+  collection(db, 'Categories'),
+  (querySnapshot) => {
+    const categories = querySnapshot.docs.map(doc => doc.data() as Category);
+    updateCategoriesCache(categories);
+  }
+);
+```
+
+**Benefits**:
+- Changes appear instantly across all admin devices
+- AI assistants get menu updates immediately
+- No manual refresh needed
+- Offline support via localStorage cache
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Categories Consistently" icon="tags">
+    Keep category names consistent (capitalization matters). Products reference category by name, not ID.
+  </Card>
+  
+  <Card title="Price as String" icon="dollar-sign">
+    Store prices as strings ("9200") to avoid floating-point errors. Convert to number when calculating totals.
+  </Card>
+  
+  <Card title="Bulk Adjustments for Inflation" icon="chart-line">
+    Use the bulk price adjustment tool quarterly or during inflation periods to update all prices at once.
+  </Card>
+  
+  <Card title="Test CSV Import" icon="file-csv">
+    Always test CSV import with a small file first (5-10 products) before importing your full menu.
+  </Card>
+  
+  <Card title="Image URLs for Better UX" icon="image">
+    Add product images when possible. They appear in customer interfaces and AI assistant suggestions.
+  </Card>
+  
+  <Card title="Detailed Descriptions" icon="align-left">
+    Include ingredients in descriptions. AI assistants use this to answer customer questions accurately.
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Orders](/features/orders) - Products become order items
+- [AI Assistants](/features/ai-assistants) - AI uses menu to take orders
+- [Customers](/features/customers) - Customer order history shows products purchased

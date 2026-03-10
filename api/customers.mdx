@@ -1,0 +1,499 @@
+---
+title: Customers API
+description: Customer and customer category management with validation
+icon: "users"
+---
+
+## Overview
+
+The Customers API manages customer records and their categories with built-in validation, duplicate detection, and bulk import capabilities.
+
+## Customer Management
+
+### getCustomersFromCache
+
+Retrieves customers from in-memory cache synchronously.
+
+```typescript
+export const getCustomersFromCache = (): Customer[]
+```
+
+<ResponseField name="customers" type="Customer[]">
+  Array of customers sorted by creation date (newest first)
+</ResponseField>
+
+---
+
+### fetchAndCacheCustomers
+
+Fetches customers from Firebase and updates caches.
+
+```typescript
+export const fetchAndCacheCustomers = async (): Promise<Customer[]>
+```
+
+---
+
+### addCustomer
+
+Creates a new customer with duplicate detection.
+
+```typescript
+export const addCustomer = async (
+  customerData: Omit<Customer, 'id' | 'createdAt'>
+): Promise<Customer>
+```
+
+<ParamField path="customerData" type="object" required>
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Customer name
+    </ParamField>
+    
+    <ParamField path="phone" type="string">
+      Phone number (will be trimmed)
+    </ParamField>
+    
+    <ParamField path="email" type="string">
+      Email address (will be lowercased and trimmed)
+    </ParamField>
+    
+    <ParamField path="address" type="string">
+      Customer address
+    </ParamField>
+    
+    <ParamField path="categoryId" type="string">
+      Customer category ID (defaults to "Nuevo" category if not provided)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="customer" type="Customer">
+  Created customer with:
+  - Generated ID (format: `CUST-{timestamp}-{random}`)
+  - Creation timestamp
+  - Default category if not specified
+</ResponseField>
+
+**Duplicate Detection:**
+- Checks for existing customers with same phone OR email
+- Throws error if duplicate found: "Ya existe un cliente con ese teléfono o email."
+
+<CodeGroup>
+```typescript Usage
+import { addCustomer } from './services/customerService';
+
+try {
+  const customer = await addCustomer({
+    name: "Laura Fernández",
+    phone: "+5491178901234",
+    email: "laura.fernandez@example.com",
+    address: "Av. Santa Fe 1234, Buenos Aires"
+  });
+  
+  console.log('Customer created:', customer.id);
+} catch (error) {
+  console.error('Creation failed:', error.message);
+}
+```
+
+```typescript Response
+{
+  id: "CUST-1709876543210-abc67",
+  name: "Laura Fernández",
+  phone: "+5491178901234",
+  email: "laura.fernandez@example.com",
+  address: "Av. Santa Fe 1234, Buenos Aires",
+  categoryId: "CUSTCAT-default-new",
+  createdAt: "2024-03-08T10:15:43.210Z"
+}
+```
+</CodeGroup>
+
+---
+
+### updateCustomer
+
+Updates an existing customer with duplicate detection.
+
+```typescript
+export const updateCustomer = async (updatedCustomer: Customer): Promise<Customer>
+```
+
+<ParamField path="updatedCustomer" type="Customer" required>
+  Complete customer object with all fields
+</ParamField>
+
+<ResponseField name="customer" type="Customer">
+  The updated customer
+</ResponseField>
+
+**Duplicate Detection:**
+- Checks other customers (excluding current one) for phone/email conflicts
+- Throws error if duplicate found
+
+<CodeGroup>
+```typescript Usage
+import { updateCustomer } from './services/customerService';
+
+const updated = await updateCustomer({
+  id: "CUST-1709876543210-abc67",
+  name: "Laura M. Fernández",
+  phone: "+5491178901234",
+  email: "laura.m.fernandez@example.com",
+  address: "Nueva dirección",
+  categoryId: "CUSTCAT-vip-123",
+  createdAt: "2024-03-08T10:15:43.210Z"
+});
+```
+</CodeGroup>
+
+---
+
+### deleteCustomer
+
+Deletes a customer by ID.
+
+```typescript
+export const deleteCustomer = async (customerId: string): Promise<void>
+```
+
+<ParamField path="customerId" type="string" required>
+  The customer ID to delete
+</ParamField>
+
+---
+
+### importCustomers
+
+Bulk imports customers with validation and category matching.
+
+```typescript
+export const importCustomers = async (
+  customersToImport: any[]
+): Promise<{ added: number; updated: number; errors: number }>
+```
+
+<ParamField path="customersToImport" type="array" required>
+  Array of customer objects with fields:
+  - `name` (required)
+  - `phone` (required)
+  - `email` (required)
+  - `address` (optional)
+  - `categoryName` (optional, matched to existing categories)
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <Expandable title="properties">
+    <ResponseField name="added" type="number">
+      Number of new customers created
+    </ResponseField>
+    <ResponseField name="updated" type="number">
+      Number of existing customers updated
+    </ResponseField>
+    <ResponseField name="errors" type="number">
+      Number of customers that failed validation
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Validation Rules:**
+- Name, phone, and email are required
+- Phone must have at least 10 digits (non-digit characters ignored)
+- Email must match pattern: `[email]@[domain].[tld]`
+- Category name is matched case-insensitively to existing categories
+
+**Matching Logic:**
+- Customers matched by phone OR email
+- Existing customers are updated
+- New customers are created
+
+<CodeGroup>
+```typescript Usage
+import { importCustomers } from './services/customerService';
+
+const customers = [
+  {
+    name: "Cliente 1",
+    phone: "+5491123456789",
+    email: "cliente1@example.com",
+    address: "Dirección 1",
+    categoryName: "VIP"
+  },
+  {
+    name: "Cliente 2",
+    phone: "11-2345-6789",
+    email: "cliente2@example.com",
+    categoryName: "Regular"
+  }
+];
+
+const result = await importCustomers(customers);
+console.log(`Added: ${result.added}, Updated: ${result.updated}, Errors: ${result.errors}`);
+```
+
+```typescript Response
+{
+  added: 1,
+  updated: 1,
+  errors: 0
+}
+```
+</CodeGroup>
+
+---
+
+## Customer Category Management
+
+### getCustomerCategoriesFromCache
+
+Retrieves customer categories from cache.
+
+```typescript
+export const getCustomerCategoriesFromCache = (): CustomerCategory[]
+```
+
+<ResponseField name="categories" type="CustomerCategory[]">
+  Array of customer categories sorted alphabetically
+</ResponseField>
+
+---
+
+### fetchAndCacheCustomerCategories
+
+Fetches categories from Firebase.
+
+```typescript
+export const fetchAndCacheCustomerCategories = async (): Promise<CustomerCategory[]>
+```
+
+---
+
+### addCustomerCategory
+
+Creates a new customer category.
+
+```typescript
+export const addCustomerCategory = async (
+  categoryData: Omit<CustomerCategory, 'id'>
+): Promise<CustomerCategory>
+```
+
+<ParamField path="categoryData" type="object" required>
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Category name
+    </ParamField>
+    <ParamField path="color" type="string" required>
+      Hex color code (e.g., "#4CAF50")
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="category" type="CustomerCategory">
+  Created category with generated ID
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { addCustomerCategory } from './services/customerCategoryService';
+
+const category = await addCustomerCategory({
+  name: "Premium",
+  color: "#9C27B0"
+});
+```
+
+```typescript Response
+{
+  id: "CUSTCAT-1709876543210-xyz45",
+  name: "Premium",
+  color: "#9C27B0"
+}
+```
+</CodeGroup>
+
+---
+
+### updateCustomerCategory
+
+Updates an existing customer category.
+
+```typescript
+export const updateCustomerCategory = async (
+  updatedCategory: CustomerCategory
+): Promise<CustomerCategory>
+```
+
+---
+
+### deleteCustomerCategory
+
+Deletes a customer category with automatic customer reassignment.
+
+```typescript
+export const deleteCustomerCategory = async (categoryId: string): Promise<void>
+```
+
+<ParamField path="categoryId" type="string" required>
+  The category ID to delete
+</ParamField>
+
+**Protected Categories:**
+- Cannot delete the "Nuevo" (New) category
+- Throws error: "La categoría 'Nuevo' no se puede eliminar."
+
+**Automatic Reassignment:**
+- All customers in deleted category are automatically reassigned to "Nuevo" category
+- Uses Firebase batch write for atomicity
+
+<CodeGroup>
+```typescript Usage
+import { deleteCustomerCategory } from './services/customerCategoryService';
+
+try {
+  await deleteCustomerCategory("CUSTCAT-old-category");
+  console.log('Category deleted, customers reassigned');
+} catch (error) {
+  console.error('Cannot delete:', error.message);
+}
+```
+</CodeGroup>
+
+---
+
+### getDefaultNewCustomerCategory
+
+Gets the default "Nuevo" category.
+
+```typescript
+export const getDefaultNewCustomerCategory = (): CustomerCategory | undefined
+```
+
+<ResponseField name="category" type="CustomerCategory | undefined">
+  The "Nuevo" category or `undefined` if not found
+</ResponseField>
+
+---
+
+### reassignCustomersFromCategory
+
+Reassigns all customers from one category to the default category.
+
+```typescript
+export const reassignCustomersFromCategory = async (deletedCategoryId: string): Promise<void>
+```
+
+<ParamField path="deletedCategoryId" type="string" required>
+  Category ID to reassign customers from
+</ParamField>
+
+<Note>
+  This function is automatically called by `deleteCustomerCategory`. You typically don't need to call it directly.
+</Note>
+
+---
+
+## TypeScript Types
+
+### Customer Interface
+
+```typescript
+interface Customer {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  categoryId: string;
+  createdAt: string; // ISO timestamp
+}
+```
+
+### CustomerCategory Interface
+
+```typescript
+interface CustomerCategory {
+  id: string;
+  name: string;
+  color: string; // Hex color code
+}
+```
+
+---
+
+## Default Categories
+
+The system initializes with three default customer categories:
+
+| Name | Color | Purpose |
+|------|-------|----------|
+| **Nuevo** | `#4CAF50` (Green) | Default for new customers |
+| **Regular** | `#2196F3` (Blue) | Repeat customers |
+| **VIP** | `#FFC107` (Amber) | Premium customers |
+
+<Warning>
+  The "Nuevo" category is protected and cannot be deleted. It serves as the fallback category for all customer operations.
+</Warning>
+
+---
+
+## Complete Example
+
+### Customer Lifecycle Management
+
+```typescript
+import {
+  addCustomer,
+  updateCustomer,
+  getCustomersFromCache,
+  addCustomerCategory,
+  getCustomerCategoriesFromCache
+} from './services/customerService';
+import { getDefaultNewCustomerCategory } from './services/customerCategoryService';
+
+// 1. Create new customer with validation
+try {
+  const customer = await addCustomer({
+    name: "Roberto Sánchez",
+    phone: "+5491189012345",
+    email: "roberto.sanchez@example.com",
+    address: "Calle Falsa 123"
+  });
+  
+  console.log('Customer created with default category:', customer.categoryId);
+  
+  // 2. After a few successful orders, upgrade to Regular
+  const regularCategory = getCustomerCategoriesFromCache()
+    .find(c => c.name === 'Regular');
+  
+  if (regularCategory) {
+    const updated = await updateCustomer({
+      ...customer,
+      categoryId: regularCategory.id
+    });
+    console.log('Upgraded to Regular customer');
+  }
+  
+  // 3. Create custom VIP category for high-value customers
+  const vipCategory = await addCustomerCategory({
+    name: "Gold VIP",
+    color: "#FFD700"
+  });
+  
+  // 4. Promote to Gold VIP
+  const vipCustomer = await updateCustomer({
+    ...updated,
+    categoryId: vipCategory.id
+  });
+  
+  console.log('Customer is now Gold VIP!');
+  
+} catch (error) {
+  if (error.message.includes('Ya existe un cliente')) {
+    console.log('Customer already exists in system');
+  } else {
+    console.error('Error:', error.message);
+  }
+}
+```

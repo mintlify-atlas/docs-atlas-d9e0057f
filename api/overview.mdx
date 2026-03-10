@@ -1,0 +1,151 @@
+---
+title: API Reference Overview
+description: Complete overview of AI Studio's service layer architecture and API patterns
+icon: "book-open"
+---
+
+## Architecture Overview
+
+AI Studio is built on a robust service layer architecture that manages all core business logic for a restaurant management system. The application uses Firebase as the backend database with a local caching strategy for optimal performance.
+
+### Service Layer Structure
+
+The API is organized into several specialized service modules:
+
+- **Product & Category Services** - Menu item and category management
+- **Order Service** - Order processing and lifecycle management
+- **Reservation Service** - Table reservation system with availability checking
+- **Table Service** - Table management and occupancy tracking
+- **Customer Services** - Customer and customer category management
+- **Gemini AI Service** - AI-powered chat assistant and audio transcription
+
+### Core Design Patterns
+
+#### Cache-First Architecture
+
+All services implement a dual-layer caching strategy:
+
+1. **In-Memory Cache** - Fast synchronous access via `getXFromCache()` functions
+2. **LocalStorage Cache** - Persistent client-side storage
+3. **Firebase Sync** - Cloud database as source of truth
+
+```typescript
+// Example: Product Service Cache Pattern
+let productsCache: Product[] | null = null;
+
+export const getProductsFromCache = (): Product[] => {
+  return productsCache || [];
+};
+
+export const fetchAndCacheProducts = async (): Promise<Product[]> => {
+  // Fetch from Firebase, update both caches
+};
+```
+
+#### Optimistic Updates
+
+Services update local caches immediately for responsive UI, then sync with Firebase:
+
+```typescript
+export const addProduct = async (productData: Omit<Product, 'id'>): Promise<Product> => {
+  const newProduct = { ...productData, id: generateId() };
+  await setDoc(doc(db, 'Products', newProduct.id), newProduct);
+  updateCaches([...getProductsFromCache(), newProduct]);
+  return newProduct;
+};
+```
+
+### Firebase Integration
+
+All services use Firebase Firestore with these collections:
+
+| Collection | Purpose | Document ID Format |
+|------------|---------|-------------------|
+| `Products` | Menu items | `PROD-{timestamp}-{random}` |
+| `Categories` | Product categories | `CAT-{timestamp}-{random}` |
+| `Orders` | Customer orders | `ORD-{timestamp}-{random}` |
+| `Reservations` | Table reservations | `RES-{timestamp}-{random}` |
+| `Tables` | Restaurant tables | `TBL-{timestamp}-{random}` or custom |
+| `Customers` | Customer records | `CUST-{timestamp}-{random}` |
+| `CustomerCategories` | Customer categories | `CUSTCAT-{timestamp}-{random}` |
+| `ReservationSettings` | Reservation configuration | `main` (singleton) |
+
+### Common Patterns
+
+#### Error Handling
+
+All async operations follow this pattern:
+
+```typescript
+try {
+  await setDoc(doc(db, SHEET_NAME, id), data);
+  updateCaches(newData);
+  return data;
+} catch (e) {
+  const errorMessage = e instanceof Error ? e.message : String(e);
+  console.error('Error details:', errorMessage);
+  throw new Error(`User-friendly message: ${errorMessage}`);
+}
+```
+
+#### Data Cleaning
+
+All services remove `undefined` values before Firebase writes:
+
+```typescript
+const cleanUndefined = (obj: any) => {
+  const newObj = { ...obj };
+  Object.keys(newObj).forEach(key => {
+    if (newObj[key] === undefined) {
+      delete newObj[key];
+    }
+  });
+  return newObj;
+};
+```
+
+#### Batch Operations
+
+Bulk operations use Firebase batch writes for atomicity:
+
+```typescript
+const batch = writeBatch(db);
+itemsToUpdate.forEach(item => {
+  const docRef = doc(db, SHEET_NAME, item.id);
+  batch.set(docRef, item);
+});
+await batch.commit();
+```
+
+### TypeScript Types
+
+All services are fully typed using interfaces defined in `types.ts`. See individual service pages for detailed type definitions.
+
+### Authentication & Security
+
+The services layer assumes Firebase authentication and security rules are configured. All operations respect Firebase security rules.
+
+### Next Steps
+
+Explore specific service APIs:
+
+<CardGroup cols={2}>
+  <Card title="Products API" icon="pizza-slice" href="/api/products">
+    Product and category management
+  </Card>
+  <Card title="Orders API" icon="receipt" href="/api/orders">
+    Order processing and tracking
+  </Card>
+  <Card title="Reservations API" icon="calendar-check" href="/api/reservations">
+    Table reservation system
+  </Card>
+  <Card title="Tables API" icon="table" href="/api/tables">
+    Table management and status
+  </Card>
+  <Card title="Customers API" icon="users" href="/api/customers">
+    Customer management
+  </Card>
+  <Card title="Gemini AI API" icon="sparkles" href="/api/gemini">
+    AI assistant and transcription
+  </Card>
+</CardGroup>

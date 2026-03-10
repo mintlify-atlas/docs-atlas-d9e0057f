@@ -1,0 +1,636 @@
+---
+title: Gemini AI API
+description: AI-powered chat assistant and audio transcription using Google Gemini
+icon: "sparkles"
+---
+
+## Overview
+
+The Gemini AI API provides intelligent chat assistance for restaurant operations and audio transcription capabilities. It uses Google's Gemini 2.5 Flash model to power conversational ordering, reservation booking, and voice-to-text features.
+
+## Chat Assistant
+
+### sendMessageToGemini
+
+Sends a message to the Gemini AI assistant with conversation history.
+
+```typescript
+export const sendMessageToGemini = async (
+  history: ChatMessage[],
+  actionLock: 'order' | 'reservation' | null = null
+): Promise<{ text: string }>
+```
+
+<ParamField path="history" type="ChatMessage[]" required>
+  Array of conversation messages (user and bot)
+  
+  <Expandable title="ChatMessage structure">
+    <ParamField path="sender" type="MessageSender" required>
+      Either `MessageSender.USER` or `MessageSender.BOT`
+    </ParamField>
+    <ParamField path="text" type="string" required>
+      Message content
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="actionLock" type="'order' | 'reservation' | null">
+  Locks the conversation context:
+  - `'order'` - Assistant focuses only on completing an order
+  - `'reservation'` - Assistant focuses only on completing a reservation
+  - `null` - Normal conversation (default)
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <Expandable title="properties">
+    <ResponseField name="text" type="string">
+      AI assistant response text
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**AI Behavior:**
+- Filters out previous JSON responses from history (prevents confusion)
+- Uses dynamic system instructions based on current business state
+- Adapts to business hours (different behavior when closed)
+- Generates structured JSON for orders and reservations when confirmed
+
+<CodeGroup>
+```typescript Usage
+import { sendMessageToGemini, MessageSender } from './services/geminiService';
+
+const history: ChatMessage[] = [
+  { sender: MessageSender.BOT, text: "Hola! ¿Quieres hacer un pedido o una reserva?" },
+  { sender: MessageSender.USER, text: "Quiero hacer un pedido" },
+  { sender: MessageSender.BOT, text: "¡Perfecto! ¿Qué te gustaría pedir?" },
+  { sender: MessageSender.USER, text: "Una pizza muzzarella" }
+];
+
+const response = await sendMessageToGemini(history);
+console.log('AI:', response.text);
+```
+
+```typescript Response
+{
+  text: "¡Excelente elección! Una pizza muzzarella por $9200. ¿Cuántas quieres? ¿Y sería para retirar o delivery?"
+}
+```
+</CodeGroup>
+
+**With Action Lock:**
+```typescript
+// Lock conversation to order completion only
+const response = await sendMessageToGemini(history, 'order');
+// AI will refuse to discuss reservations until order is complete
+```
+
+---
+
+## Audio Transcription
+
+### transcribeAudio
+
+Transcribes audio to text using Gemini's multimodal capabilities.
+
+```typescript
+export const transcribeAudio = async (
+  base64Audio: string,
+  mimeType: string
+): Promise<string>
+```
+
+<ParamField path="base64Audio" type="string" required>
+  Base64-encoded audio data (without data URL prefix)
+</ParamField>
+
+<ParamField path="mimeType" type="string" required>
+  Audio MIME type (e.g., "audio/webm", "audio/mp3", "audio/wav")
+</ParamField>
+
+<ResponseField name="transcription" type="string">
+  Transcribed text from the audio
+</ResponseField>
+
+**Supported Audio Formats:**
+- WebM (audio/webm)
+- MP3 (audio/mp3)
+- WAV (audio/wav)
+- M4A (audio/m4a)
+- OGG (audio/ogg)
+
+<CodeGroup>
+```typescript Usage
+import { transcribeAudio } from './services/geminiService';
+
+// Assuming you have audio from MediaRecorder
+const audioBlob = new Blob([audioData], { type: 'audio/webm' });
+const reader = new FileReader();
+
+reader.onloadend = async () => {
+  const base64 = reader.result.split(',')[1]; // Remove data URL prefix
+  
+  try {
+    const transcription = await transcribeAudio(base64, 'audio/webm');
+    console.log('User said:', transcription);
+    // Use transcription as text input to chat
+  } catch (error) {
+    console.error('Transcription failed:', error);
+  }
+};
+
+reader.readAsDataURL(audioBlob);
+```
+
+```typescript Response
+"Quiero pedir dos pizzas muzzarella para delivery"
+```
+</CodeGroup>
+
+<Note>
+  The transcription prompt instructs Gemini to return only the transcribed text without any additional commentary or formatting.
+</Note>
+
+---
+
+## Netlify Functions
+
+The AI functionality is also exposed via serverless Netlify functions for client-side applications.
+
+### POST /api/gemini
+
+Netlify function for chat interactions.
+
+```typescript
+POST /.netlify/functions/gemini
+Content-Type: application/json
+
+{
+  "history": [
+    { "role": "user", "parts": [{ "text": "Hola" }] },
+    { "role": "model", "parts": [{ "text": "Hola!" }] }
+  ],
+  "systemInstruction": "You are a helpful assistant..."
+}
+```
+
+<ParamField path="history" type="array">
+  Array of Gemini-formatted messages with `role` and `parts`
+</ParamField>
+
+<ParamField path="systemInstruction" type="string" required>
+  System instruction prompt for the AI
+</ParamField>
+
+<ResponseField name="response" type="object">
+  <ResponseField name="text" type="string">
+    AI response text
+  </ResponseField>
+</ResponseField>
+
+**Status Codes:**
+- `200` - Success
+- `400` - Missing history in request
+- `405` - Method not allowed (only POST accepted)
+- `500` - AI generation error
+
+---
+
+### POST /api/transcribe
+
+Netlify function for audio transcription.
+
+```typescript
+POST /.netlify/functions/transcribe
+Content-Type: application/json
+
+{
+  "audio": "base64EncodedAudioData",
+  "mimeType": "audio/webm"
+}
+```
+
+<ParamField path="audio" type="string" required>
+  Base64-encoded audio data
+</ParamField>
+
+<ParamField path="mimeType" type="string" required>
+  Audio MIME type
+</ParamField>
+
+<ResponseField name="response" type="object">
+  <ResponseField name="text" type="string">
+    Transcribed text
+  </ResponseField>
+</ResponseField>
+
+**Status Codes:**
+- `200` - Success
+- `400` - Missing audio data or mimeType
+- `405` - Method not allowed
+- `500` - Transcription error
+
+<CodeGroup>
+```typescript Fetch Example
+const response = await fetch('/.netlify/functions/transcribe', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    audio: base64AudioData,
+    mimeType: 'audio/webm'
+  })
+});
+
+const { text } = await response.json();
+console.log('Transcription:', text);
+```
+</CodeGroup>
+
+---
+
+## AI System Instructions
+
+The AI assistant uses dynamic system instructions that adapt to:
+
+### Business State Context
+
+- **Current date/time** - Understands "today", "tomorrow", relative times
+- **Open/Closed status** - Different behavior based on business hours
+- **Menu availability** - Real-time menu from product cache
+- **Table availability** - Real-time reservation and order data
+- **Reservation settings** - Minimum booking times, durations, etc.
+
+### Conversation Modes
+
+#### Normal Mode (No Lock)
+
+**When Business is Open:**
+- Offers both ordering and reservation services
+- Provides menu information
+- Shows business hours
+- Guides user through either flow
+
+**When Business is Closed:**
+- Informs user business is closed for orders
+- Still accepts reservations for future dates
+- Shows next opening time
+
+#### Order Lock Mode
+
+- **Single focus:** Complete the current order
+- Refuses to start reservations
+- Collects: products, quantities, customer info, delivery address, payment method
+- **Payment rules:**
+  - Delivery orders: Only "Transferencia" (Transfer)
+  - Pickup orders: "Efectivo" (Cash) or "Credito" (Credit)
+- Confirms order details before generating JSON
+
+#### Reservation Lock Mode
+
+- **Single focus:** Complete the current reservation
+- Refuses to take orders
+- Collects: name, phone, guests, date, time
+- Validates against capacity and availability
+- Checks minimum booking time requirements
+- Prevents past reservations
+- Confirms details before generating JSON
+
+---
+
+## JSON Response Formats
+
+When the user confirms an order or reservation, the AI generates structured JSON:
+
+### Order JSON
+
+```json
+{
+  "intent": "ORDER",
+  "customer": {
+    "name": "Juan Pérez",
+    "phone": "+5491123456789",
+    "address": "Av. Corrientes 1234, Buenos Aires"
+  },
+  "items": [
+    {
+      "name": "Pizza Muzzarella",
+      "quantity": 2,
+      "price": 9200
+    },
+    {
+      "name": "Pizza Napolitana",
+      "quantity": 1,
+      "price": 9700
+    }
+  ],
+  "total": 28100,
+  "type": "delivery",
+  "paymentMethod": "Transferencia"
+}
+```
+
+### Reservation JSON
+
+```json
+{
+  "intent": "RESERVATION",
+  "customerName": "María González",
+  "customerPhone": "+5491145678901",
+  "guests": 4,
+  "date": "2024-03-10",
+  "time": "20:30"
+}
+```
+
+<Note>
+  The application detects these JSON blocks in the AI response and processes them accordingly. JSON is wrapped in markdown code blocks: ` ```json ... ``` `
+</Note>
+
+---
+
+## AI Prompt Architecture
+
+### Menu Generation
+
+```typescript
+const generateMenuForPrompt = (): string => {
+  // Reads from product cache
+  // Groups by category
+  // Includes name, price, description
+  // Returns JSON string
+}
+```
+
+### Schedule Formatting
+
+```typescript
+const formatScheduleForPrompt = (): string => {
+  // Reads business schedule
+  // Formats as readable text
+  // Example: "Lunes: de 18:00 a 23:00"
+}
+```
+
+### Table Information
+
+```typescript
+const generateTablesForPrompt = (): string => {
+  // Lists reservable tables with capacity
+  // Calculates total capacity
+  // Warns AI about capacity limits
+}
+```
+
+### Real-Time Availability
+
+```typescript
+const generateAvailabilityForPrompt = (): string => {
+  // Lists occupied/reserved tables
+  // Shows time ranges
+  // Instructs AI to avoid conflicts
+}
+```
+
+---
+
+## TypeScript Types
+
+### MessageSender Enum
+
+```typescript
+enum MessageSender {
+  USER = 'user',
+  BOT = 'bot'
+}
+```
+
+### ChatMessage Interface
+
+```typescript
+interface ChatMessage {
+  sender: MessageSender;
+  text: string;
+}
+```
+
+### Gemini API Request Format
+
+```typescript
+interface GeminiMessage {
+  role: 'user' | 'model';
+  parts: Array<{ text: string }>;
+}
+
+interface GeminiRequest {
+  model: 'gemini-2.5-flash';
+  contents: GeminiMessage[];
+  config: {
+    systemInstruction: string;
+  };
+}
+```
+
+### Audio Transcription Request
+
+```typescript
+interface TranscriptionRequest {
+  parts: [
+    {
+      inlineData: {
+        mimeType: string;
+        data: string; // base64
+      };
+    },
+    {
+      text: string; // Transcription prompt
+    }
+  ];
+}
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+```bash
+API_KEY=your_google_ai_api_key_here
+```
+
+<Warning>
+  The API_KEY must be set in environment variables (`.env` for development, Netlify environment settings for production).
+</Warning>
+
+### Google GenAI Initialization
+
+```typescript
+import { GoogleGenAI } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+```
+
+---
+
+## Error Handling
+
+### Service Layer Errors
+
+```typescript
+try {
+  const response = await sendMessageToGemini(history);
+  // Process response
+} catch (error) {
+  console.error("AI Error:", error instanceof Error ? error.message : error);
+  // Fallback behavior
+}
+```
+
+### Netlify Function Errors
+
+**Chat Function:**
+```json
+{
+  "error": "Failed to get response from assistant."
+}
+```
+
+**Transcribe Function:**
+```json
+{
+  "error": "Failed to transcribe audio."
+}
+```
+
+---
+
+## Best Practices
+
+### Conversation Management
+
+1. **Filter JSON from history** - The service automatically filters previous JSON responses
+2. **Use action locks** - Lock context when user commits to an action
+3. **Validate AI output** - Always parse and validate generated JSON
+4. **Handle errors gracefully** - Provide fallback options if AI fails
+
+### Audio Transcription
+
+1. **Optimize audio quality** - Better audio = better transcription
+2. **Limit audio length** - Keep recordings under 1 minute for faster processing
+3. **Handle silence** - Check for empty transcriptions
+4. **Use appropriate formats** - WebM and MP3 work well
+
+### Performance
+
+1. **Cache AI responses** - For repeated questions
+2. **Debounce requests** - Avoid rapid-fire API calls
+3. **Show loading states** - AI responses can take 1-3 seconds
+4. **Implement timeouts** - Set reasonable timeout limits
+
+---
+
+## Complete Example
+
+### Voice-Enabled Chat Assistant
+
+```typescript
+import { 
+  sendMessageToGemini, 
+  transcribeAudio,
+  MessageSender 
+} from './services/geminiService';
+
+class ChatAssistant {
+  private history: ChatMessage[] = [];
+  private actionLock: 'order' | 'reservation' | null = null;
+  
+  async initialize() {
+    // Get initial greeting
+    const greeting = await sendMessageToGemini([]);
+    this.history.push({
+      sender: MessageSender.BOT,
+      text: greeting.text
+    });
+    return greeting.text;
+  }
+  
+  async sendTextMessage(userText: string) {
+    // Add user message
+    this.history.push({
+      sender: MessageSender.USER,
+      text: userText
+    });
+    
+    // Get AI response
+    const response = await sendMessageToGemini(this.history, this.actionLock);
+    
+    // Add bot response
+    this.history.push({
+      sender: MessageSender.BOT,
+      text: response.text
+    });
+    
+    // Check for JSON intent
+    const jsonMatch = response.text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      const intent = JSON.parse(jsonMatch[1]);
+      return { type: 'intent', data: intent, text: response.text };
+    }
+    
+    return { type: 'message', text: response.text };
+  }
+  
+  async sendVoiceMessage(audioBlob: Blob) {
+    // Convert audio to base64
+    const base64 = await this.blobToBase64(audioBlob);
+    const base64Data = base64.split(',')[1];
+    
+    // Transcribe
+    const transcription = await transcribeAudio(
+      base64Data,
+      audioBlob.type
+    );
+    
+    // Send as text message
+    return this.sendTextMessage(transcription);
+  }
+  
+  setActionLock(action: 'order' | 'reservation' | null) {
+    this.actionLock = action;
+  }
+  
+  reset() {
+    this.history = [];
+    this.actionLock = null;
+  }
+  
+  private async blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+}
+
+// Usage
+const chat = new ChatAssistant();
+
+// Initialize
+const greeting = await chat.initialize();
+console.log('Bot:', greeting);
+
+// Text message
+const response1 = await chat.sendTextMessage("Quiero hacer un pedido");
+console.log('Bot:', response1.text);
+
+// Lock to order mode
+chat.setActionLock('order');
+
+// Voice message
+const response2 = await chat.sendVoiceMessage(audioBlob);
+if (response2.type === 'intent' && response2.data.intent === 'ORDER') {
+  console.log('Order confirmed:', response2.data);
+  // Process order...
+}
+```

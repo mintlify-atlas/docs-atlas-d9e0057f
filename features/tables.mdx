@@ -1,0 +1,659 @@
+---
+title: 'Table Management'
+description: 'Dynamic table status tracking, manual controls, and session-based billing for dine-in service'
+icon: 'chair'
+---
+
+## Overview
+
+The Table Management system provides real-time tracking of table status, manual occupancy controls, and integration with orders and reservations. It supports session-based billing for dine-in customers with accumulated totals across multiple orders.
+
+### Key Benefits
+
+- **Real-Time Status**: Live view of free, occupied, reserved, and blocked tables
+- **Manual Controls**: Override status, occupy tables, and block for maintenance
+- **Access Codes**: Generate secure 4-digit codes for customer table access
+- **Session Tracking**: Track all orders at a table from occupancy to payment
+- **Accumulated Billing**: Sum multiple orders for single table bill
+- **Reservation Integration**: Tables automatically blocked before reservation time
+
+## Table Data Structure
+
+### Base Table Interface
+
+From `types.ts:152-164`:
+
+```typescript
+export interface Table {
+  id: string;                      // Format: TBL-{timestamp}-{random}
+  name: string;                    // Display name (e.g., "Mesa 1", "Barra 3")
+  capacity: number;                // Maximum guests
+  allowsReservations: boolean;     // Whether table can be reserved
+  overrideStatus: 'Bloqueada' | 'Ocupada' | null;  // Manual status override
+  occupiedSince?: string | null;   // ISO timestamp when manually occupied
+  accessCode?: string;             // 4-digit code for customer access
+  currentSession?: {
+    customerName: string;
+    guests: number;
+  };
+}
+```
+
+### Enriched Table Interface
+
+From `types.ts:168-180`:
+
+```typescript
+export interface EnrichedTable extends Table {
+  status: TableStatus;             // Computed status
+  details?: {
+    type: 'order' | 'reservation';
+    id: string;
+    customerName: string;
+    time?: string;                 // For reservations
+    startTime?: string;            // For orders/occupancy
+    orderStatus?: OrderStatus;     // Current order status
+  };
+  activeOrdersOnTable?: Order[];   // All active orders at this table
+  accumulatedTotal?: number;       // Sum of all orders in current session
+}
+```
+
+### Table Status Types
+
+From `types.ts:166`:
+
+```typescript
+export type TableStatus = 'Libre' | 'Ocupada' | 'Reservada' | 'Bloqueada';
+```
+
+<Tabs>
+  <Tab title="Libre (Free)">
+    Table is available for immediate seating.
+    
+    **Conditions**:
+    - No active orders
+    - No upcoming reservations
+    - Not manually blocked/occupied
+  </Tab>
+  
+  <Tab title="Ocupada (Occupied)">
+    Table currently has diners.
+    
+    **Conditions**:
+    - Has active dine-in orders, OR
+    - Manually marked as occupied
+  </Tab>
+  
+  <Tab title="Reservada (Reserved)">
+    Table has upcoming reservation (1-2 hours away).
+    
+    **Conditions**:
+    - Confirmed reservation exists
+    - Reservation time is 1-2 hours from now
+  </Tab>
+  
+  <Tab title="Bloqueada (Blocked)">
+    Table unavailable for customers.
+    
+    **Conditions**:
+    - Manually blocked by admin, OR
+    - Reservation starting within 1 hour
+  </Tab>
+</Tabs>
+
+## Core Service Functions
+
+From `services/tableService.ts`:
+
+### Managing Tables
+
+#### Creating Tables
+
+```typescript
+addTable(
+  tableData: Omit<Table, 'id'>
+): Promise<Table>
+```
+
+**Example**:
+
+```typescript
+import { addTable } from './services/tableService';
+
+const newTable = await addTable({
+  name: 'Mesa 10',
+  capacity: 6,
+  allowsReservations: true,
+  overrideStatus: null
+});
+
+console.log(newTable.id);  // "TBL-1710087654321-abc5d"
+```
+
+#### Updating Tables
+
+```typescript
+updateTable(updatedTable: Table): Promise<Table>
+```
+
+#### Manual Status Override
+
+```typescript
+setTableOverrideStatus(
+  tableId: string,
+  status: 'Bloqueada' | 'Ocupada' | null
+): Promise<Table>
+```
+
+**Example**:
+
+```typescript
+import { setTableOverrideStatus } from './services/tableService';
+
+// Block table for maintenance
+await setTableOverrideStatus('TBL-123', 'Bloqueada');
+
+// Manually mark as occupied
+await setTableOverrideStatus('TBL-123', 'Ocupada');
+// Sets occupiedSince to current timestamp
+
+// Remove override (return to automatic status)
+await setTableOverrideStatus('TBL-123', null);
+// Clears occupiedSince, currentSession, and accessCode
+```
+
+<Warning>
+**Status Override Behavior**:
+
+- Setting `overrideStatus: 'Ocupada'` auto-sets `occupiedSince` to now
+- Setting `overrideStatus: null` clears session data (occupiedSince, currentSession, accessCode)
+- Blocked tables cannot be reserved or used for dine-in orders
+</Warning>
+
+### Session Management
+
+#### Generate Access Code
+
+From `tableService.ts:137-153`:
+
+```typescript
+occupyTableAndGenerateCode(tableId: string): Promise<string>
+```
+
+**How It Works**:
+
+1. Generates random 4-digit code (1000-9999)
+2. Sets `overrideStatus: 'Ocupada'`
+3. Records `occupiedSince` timestamp
+4. Stores `accessCode` on table
+5. Returns code for customer
+
+**Example**:
+
+```typescript
+import { occupyTableAndGenerateCode } from './services/tableService';
+
+const code = await occupyTableAndGenerateCode('TBL-123');
+console.log(`Customer access code: ${code}`);  // "7342"
+
+// Customer can use this code to order from their table
+```
+
+#### Verify Access Code
+
+```typescript
+verifyTableAccessCode(tableId: string, code: string): boolean
+```
+
+**Example**:
+
+```typescript
+import { verifyTableAccessCode } from './services/tableService';
+
+const isValid = verifyTableAccessCode('TBL-123', '7342');
+if (isValid) {
+  // Allow customer to place order for this table
+}
+```
+
+#### Update Session Info
+
+```typescript
+updateTableSession(
+  tableId: string,
+  customerName: string,
+  guests: number
+): Promise<void>
+```
+
+**Example**:
+
+```typescript
+import { updateTableSession } from './services/tableService';
+
+// Record who's sitting at the table
+await updateTableSession('TBL-123', 'Familia Pérez', 4);
+
+// Table now has:
+// currentSession: { customerName: 'Familia Pérez', guests: 4 }
+```
+
+### Enriching Tables with Status
+
+From `tableService.ts:188-291`:
+
+```typescript
+enrichTables(
+  tables: Table[],
+  orders: Order[],
+  reservations: Reservation[]
+): EnrichedTable[]
+```
+
+**This function computes dynamic table status** by checking:
+
+1. Manual overrides (`overrideStatus`)
+2. Active dine-in orders at each table
+3. Upcoming reservations (within 2 hours)
+4. Session accumulated totals
+
+**Example**:
+
+```typescript
+import { enrichTables, getTablesFromCache } from './services/tableService';
+import { getOrdersFromCache } from './services/orderService';
+import { getReservationsFromCache } from './services/reservationService';
+
+const tables = getTablesFromCache();
+const orders = getOrdersFromCache();
+const reservations = getReservationsFromCache();
+
+const enrichedTables = enrichTables(tables, orders, reservations);
+
+enrichedTables.forEach(table => {
+  console.log(`${table.name}: ${table.status}`);
+  if (table.accumulatedTotal) {
+    console.log(`  Total acumulado: $${table.accumulatedTotal}`);
+  }
+});
+
+// Output:
+// Mesa 1: Ocupada
+//   Total acumulado: $24500
+// Mesa 2: Libre
+// Mesa 3: Reservada
+// Mesa 4: Bloqueada
+```
+
+### Finding Available Tables
+
+```typescript
+getAvailableTablesForDineIn(
+  reservationToIgnoreId?: string
+): Table[]
+```
+
+**Returns tables that are**:
+- Not manually blocked or occupied
+- Don't have active dine-in orders
+- Don't have reservations starting within 1 hour
+
+**Example**:
+
+```typescript
+import { getAvailableTablesForDineIn } from './services/tableService';
+
+const availableTables = getAvailableTablesForDineIn();
+console.log(`${availableTables.length} tables available for walk-ins`);
+
+availableTables.forEach(table => {
+  console.log(`${table.name} - Capacity: ${table.capacity}`);
+});
+```
+
+## Status Computation Logic
+
+From `tableService.ts:216-289`, the system computes status in priority order:
+
+### 1. Manual Override (Highest Priority)
+
+```typescript
+if (table.overrideStatus === 'Bloqueada') {
+  return {
+    ...table,
+    status: 'Bloqueada',
+    details: { type: 'order', id: 'manual', customerName: 'Administrador' }
+  };
+}
+```
+
+### 2. Manual Occupancy or Active Orders
+
+```typescript
+if (table.overrideStatus === 'Ocupada') {
+  // Find all orders since occupiedSince timestamp
+  const sessionOrders = orders.filter(
+    o => o.tableIds?.includes(table.id) &&
+         o.type === OrderType.DINE_IN &&
+         table.occupiedSince &&
+         new Date(o.createdAt) >= new Date(table.occupiedSince)
+  );
+  
+  const accumulatedTotal = sessionOrders.reduce((sum, order) => sum + order.total, 0);
+  
+  return {
+    ...table,
+    status: 'Ocupada',
+    activeOrdersOnTable: sessionOrders,
+    accumulatedTotal,
+    details: { /* ... */ }
+  };
+}
+```
+
+### 3. Reservation Blocking (Within 1 Hour)
+
+```typescript
+const blockWindowEnd = new Date(now.getTime() + 60 * 60 * 1000);
+
+if (reservation.time > now && reservation.time <= blockWindowEnd) {
+  return {
+    ...table,
+    status: 'Bloqueada',
+    details: {
+      type: 'reservation',
+      id: reservation.id,
+      customerName: reservation.customerName,
+      time: '20:00'  // Formatted time
+    }
+  };
+}
+```
+
+### 4. Reservation Preview (1-2 Hours Away)
+
+```typescript
+const reservationWindowEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+
+if (reservation.time > blockWindowEnd && reservation.time <= reservationWindowEnd) {
+  return {
+    ...table,
+    status: 'Reservada',
+    details: { /* ... */ }
+  };
+}
+```
+
+### 5. Default to Free
+
+```typescript
+return { ...table, status: 'Libre' };
+```
+
+## Session-Based Billing
+
+From `tableService.ts:219-250`:
+
+When a table is manually occupied, the system tracks all orders from that moment:
+
+**Session Start**:
+```typescript
+const code = await occupyTableAndGenerateCode('TBL-5');
+// Sets occupiedSince: "2026-03-10T19:30:00.000Z"
+```
+
+**Customer Orders Multiple Times**:
+```typescript
+// Order 1 at 19:35
+await saveOrder({
+  customer: { name: 'Mesa 5', phone: '' },
+  items: [{ name: 'Pizza Muzzarella', quantity: 1, price: 9200, ... }],
+  total: 9200,
+  type: OrderType.DINE_IN,
+  tableIds: ['TBL-5'],
+  // ...
+});
+
+// Order 2 at 20:10 (customer orders dessert)
+await saveOrder({
+  customer: { name: 'Mesa 5', phone: '' },
+  items: [{ name: 'Flan', quantity: 2, price: 1500, ... }],
+  total: 3000,
+  type: OrderType.DINE_IN,
+  tableIds: ['TBL-5'],
+  // ...
+});
+```
+
+**Accumulated Total Calculation**:
+```typescript
+const enrichedTable = getEnrichedTableById('TBL-5');
+
+console.log(enrichedTable.accumulatedTotal);  // 12200 (9200 + 3000)
+console.log(enrichedTable.activeOrdersOnTable?.length);  // 2
+```
+
+**Session End**:
+```typescript
+// Mark both orders as paid and completed
+await markOrderAsPaid(order1.id, PaymentMethod.CASH);
+await markOrderAsPaid(order2.id, PaymentMethod.CASH);
+
+// Clear table session
+await setTableOverrideStatus('TBL-5', null);
+// Clears: occupiedSince, accessCode, currentSession
+```
+
+<Note>
+**Session Persistence**: 
+
+Sessions survive across page refreshes and admin device switches because:
+- Table data syncs via Firebase
+- Orders link to tables via `tableIds`
+- `occupiedSince` timestamp determines session start
+</Note>
+
+## User Workflows
+
+### Seating Walk-In Customer
+
+<Steps>
+  <Step title="Check Available Tables">
+    In TablesPanel, view tables with status "Libre" (green).
+  </Step>
+  
+  <Step title="Select Table">
+    Choose appropriate table based on party size.
+  </Step>
+  
+  <Step title="Occupy Table">
+    Click "Ocupar Mesa" button. System:
+    - Generates 4-digit access code
+    - Sets status to "Ocupada"
+    - Records current time as `occupiedSince`
+  </Step>
+  
+  <Step title="Provide Code to Customer">
+    Give customer the 4-digit code for self-ordering (if enabled).
+    
+    Or record customer name:
+    - Click "Actualizar Sesión"
+    - Enter customer name and guest count
+  </Step>
+  
+  <Step title="Take Orders">
+    Create dine-in orders with this table's ID. Multiple orders accumulate.
+  </Step>
+  
+  <Step title="Process Payment">
+    View accumulated total in table details. Mark all orders as paid.
+  </Step>
+  
+  <Step title="Clear Table">
+    Click "Liberar Mesa" to reset:
+    - Clears occupancy
+    - Removes access code
+    - Table returns to "Libre" status
+  </Step>
+</Steps>
+
+### Blocking Table for Maintenance
+
+<Steps>
+  <Step title="Select Table">
+    In TablesPanel, click on table to block.
+  </Step>
+  
+  <Step title="Set Blocked Status">
+    Click "Bloquear Mesa" button.
+  </Step>
+  
+  <Step title="Table Becomes Unavailable">
+    Table shows as "Bloqueada" (red) and:
+    - Cannot be reserved
+    - Cannot be used for dine-in orders
+    - Appears in admin panel with maintenance indicator
+  </Step>
+  
+  <Step title="Unblock When Ready">
+    Click "Desbloquear Mesa" to return to normal status.
+  </Step>
+</Steps>
+
+### Processing Reservation with Tables
+
+<Steps>
+  <Step title="Reservation Created">
+    When admin or AI creates reservation, tables automatically assigned.
+  </Step>
+  
+  <Step title="2 Hours Before: Table Shows 'Reservada'">
+    Yellow status indicator, shows customer name and time.
+  </Step>
+  
+  <Step title="1 Hour Before: Table Shows 'Bloqueada'">
+    Red status, cannot be used for walk-ins.
+  </Step>
+  
+  <Step title="Customer Arrives">
+    Admin marks reservation as "Seated" in ReservationsPanel.
+    
+    Table status updates to show reservation customer is now dining.
+  </Step>
+  
+  <Step title="Create Orders">
+    Dine-in orders linked to reservation's `tableIds`.
+  </Step>
+  
+  <Step title="Complete Reservation">
+    After payment, mark reservation as "Completed".
+    
+    Tables return to "Libre" status.
+  </Step>
+</Steps>
+
+## Initial Table Data
+
+From `tableService.ts:28-34`:
+
+```typescript
+const initialTables: Table[] = [
+  { id: 'T1', name: 'Mesa 1', capacity: 4, allowsReservations: true, overrideStatus: null },
+  { id: 'T2', name: 'Mesa 2', capacity: 4, allowsReservations: true, overrideStatus: null },
+  { id: 'T3', name: 'Mesa 3', capacity: 2, allowsReservations: true, overrideStatus: null },
+  { id: 'T4', name: 'Mesa 4', capacity: 6, allowsReservations: true, overrideStatus: null },
+  { id: 'T5', name: 'Barra 1', capacity: 1, allowsReservations: false, overrideStatus: null },
+];
+```
+
+<Note>
+Customize this initial data before going live. Add/remove tables to match your restaurant layout.
+</Note>
+
+## Real-Time Synchronization
+
+From `components/AdminDashboard.tsx:115`:
+
+```typescript
+const unsubTables = onSnapshot(
+  collection(db, 'Tables'),
+  (querySnapshot) => {
+    const tables = querySnapshot.docs.map(doc => doc.data() as Table);
+    updateTablesCache(tables);
+    setDataTimestamp(Date.now());  // Triggers UI refresh
+  }
+);
+```
+
+**Multi-Admin Scenario**:
+
+1. Admin A marks Table 3 as occupied (generates code "4521")
+2. Firebase update triggers
+3. Admin B's panel immediately shows Table 3 as "Ocupada"
+4. Both admins see same accumulated total as orders are placed
+
+## Configuration
+
+### Reservation Allowance
+
+```typescript
+interface Table {
+  allowsReservations: boolean;  // Set false for bar seating, etc.
+}
+```
+
+**Use Cases**:
+- **`true`**: Regular dining tables, booths
+- **`false`**: Bar counter seats, outdoor tables in rain season
+
+### Table Capacity
+
+```typescript
+interface Table {
+  capacity: number;  // Maximum guests
+}
+```
+
+<Warning>
+Reservation system uses capacity to:
+- Find suitable tables for party size
+- Combine tables when needed
+- Prevent overbooking
+
+Keep capacity values accurate!
+</Warning>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Session Tracking" icon="clock">
+    Always use "Ocupar Mesa" to start sessions. This ensures accurate accumulated totals for billing.
+  </Card>
+  
+  <Card title="Clear Sessions Promptly" icon="broom">
+    After customers pay and leave, immediately clear the table session to make it available.
+  </Card>
+  
+  <Card title="Block for Maintenance" icon="wrench">
+    Use the block feature instead of deleting tables during cleaning or repairs.
+  </Card>
+  
+  <Card title="Accurate Capacity" icon="users">
+    Set realistic capacity values. System uses these for automatic table assignment.
+  </Card>
+  
+  <Card title="Monitor Reserved Tables" icon="calendar">
+    Check TablesPanel 1 hour before reservation times to ensure tables are clean and ready.
+  </Card>
+  
+  <Card title="Access Codes for Self-Service" icon="key">
+    Generate access codes for customers to order via QR menu or web interface.
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Orders](/features/orders) - Dine-in orders link to tables, session tracking
+- [Reservations](/features/reservations) - Reservations automatically assign and block tables
+- [AI Assistants](/features/ai-assistants) - AI can help customers order by table

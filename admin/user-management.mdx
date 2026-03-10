@@ -1,0 +1,403 @@
+---
+title: 'User Management'
+description: 'Manage admin panel users, roles, and permissions for Ai Studio restaurant management system'
+icon: 'users'
+---
+
+## Overview
+
+The Users Panel provides comprehensive user account management for the Ai Studio admin dashboard. Control who has access to your restaurant management system and define their permission levels through role-based access control.
+
+<Info>
+  User management is restricted to Admin users only. Editor role users cannot access the Users panel.
+</Info>
+
+## User Roles
+
+Ai Studio implements a two-tier role system defined in `types.ts:200-203`:
+
+<CardGroup cols={2}>
+  <Card title="Administrador (Admin)" icon="shield-halved">
+    Full system access with all privileges including:
+    - User management (create, edit, delete users)
+    - Complete order and reservation control
+    - Product and menu management
+    - System configuration and settings
+    - Bot management and configuration
+    - All other panel access
+  </Card>
+  <Card title="Editor" icon="pen-to-square">
+    Operational access with restrictions:
+    - Order and reservation management
+    - Customer management
+    - Table status updates
+    - Product viewing and editing
+    - **Cannot** manage users
+    - **Cannot** modify system settings
+    - **Cannot** delete critical data
+  </Card>
+</CardGroup>
+
+### Role Comparison
+
+<Tabs>
+  <Tab title="Admin Role">
+    ### Administrator Capabilities
+    
+    Administrators have unrestricted access to all dashboard features:
+    
+    **Full Management Access:**
+    - ✅ Create, edit, and delete users
+    - ✅ Configure system settings
+    - ✅ Manage AI bots and integrations
+    - ✅ Access all data panels
+    - ✅ Delete orders and reservations
+    - ✅ Bulk operations
+    - ✅ Schedule exception management
+    
+    **Use Case:** Restaurant owners, managers, and technical administrators
+  </Tab>
+  <Tab title="Editor Role">
+    ### Editor Capabilities
+    
+    Editors focus on day-to-day operational tasks:
+    
+    **Operational Access:**
+    - ✅ Process orders and reservations
+    - ✅ Update order status
+    - ✅ Manage customer records
+    - ✅ View and edit products
+    - ✅ Handle table assignments
+    - ❌ User management
+    - ❌ System configuration
+    - ❌ Critical data deletion
+    
+    **Use Case:** Staff members, waiters, kitchen managers, customer service
+  </Tab>
+</Tabs>
+
+## User Structure
+
+Each user account contains the following fields (from `types.ts:205-212`):
+
+```typescript
+interface User {
+    id: string;              // Unique identifier (auto-generated)
+    name: string;            // Full name
+    email: string;           // Email address (unique, lowercase)
+    role: UserRole;          // ADMIN or EDITOR
+    createdAt: string;       // ISO timestamp of creation
+    lastAccess: string | null; // ISO timestamp of last login
+}
+```
+
+<Note>
+  Email addresses are automatically converted to lowercase and must be unique across all users.
+</Note>
+
+## Managing Users
+
+### Accessing the Users Panel
+
+1. Log in to the admin dashboard with Admin credentials
+2. Click **Usuarios** in the left sidebar navigation
+3. The Users panel displays all registered system users
+
+![Users Panel Interface]
+The panel shows a searchable table with user details and action buttons for each user.
+
+### User Table Columns
+
+The users table displays:
+
+| Column | Description |
+|--------|-------------|
+| **Nombre** | User's full name |
+| **Email** | User's email address (used for login) |
+| **Rol** | Role badge (Administrador or Editor) |
+| **Último Acceso** | Timestamp of last dashboard login |
+| **Acciones** | Edit and Delete buttons |
+
+### Creating a New User
+
+<Steps>
+  <Step title="Open Add User Modal">
+    Click the **Agregar Usuario** button in the top-right corner of the Users panel
+  </Step>
+  <Step title="Enter User Details">
+    Fill in the user information form:
+    - **Name**: Full name of the user
+    - **Email**: Unique email address (validation enforced)
+    - **Role**: Select either Administrador or Editor from dropdown
+  </Step>
+  <Step title="Save User">
+    Click **Guardar** to create the user account
+    
+    The system validates:
+    - Email uniqueness (prevents duplicates)
+    - Required fields (all must be filled)
+    - Email format (basic validation)
+  </Step>
+  <Step title="Confirmation">
+    Success toast notification appears: "Usuario agregado con éxito."
+    
+    The new user is immediately synced to Firebase and appears in the users table
+  </Step>
+</Steps>
+
+<Warning>
+  Duplicate email addresses are not allowed. If you attempt to create a user with an existing email, you'll receive an error: "Ya existe un usuario con el email [email]."
+</Warning>
+
+### Editing User Details
+
+<Steps>
+  <Step title="Select User to Edit">
+    Click the **Edit** icon (pencil) in the Actions column for the desired user
+  </Step>
+  <Step title="Modify User Information">
+    The Edit User modal opens with pre-filled information
+    
+    You can modify:
+    - Name
+    - Email (must remain unique)
+    - Role (promote Editor to Admin or vice versa)
+  </Step>
+  <Step title="Save Changes">
+    Click **Guardar** to update the user account
+    
+    Changes are validated and synced immediately to Firebase
+  </Step>
+  <Step title="Confirmation">
+    Success notification: "Usuario actualizado con éxito."
+  </Step>
+</Steps>
+
+### Deleting a User
+
+<Steps>
+  <Step title="Initiate Deletion">
+    Click the **Delete** icon (trash) in the Actions column for the user to remove
+  </Step>
+  <Step title="Confirm Deletion">
+    A confirmation modal appears showing the user's name
+    
+    **Warning**: This action is permanent and cannot be undone
+  </Step>
+  <Step title="Execute Deletion">
+    Click **Eliminar** to permanently remove the user account
+    
+    The user is immediately removed from Firebase and the local cache
+  </Step>
+  <Step title="Confirmation">
+    Success notification: "Usuario eliminado con éxito."
+  </Step>
+</Steps>
+
+<Warning>
+  Deleting a user removes their account immediately. They will lose access to the admin dashboard. Ensure you have at least one Admin user before deleting accounts.
+</Warning>
+
+## User Interface Features
+
+### Search and Filter
+
+The Users panel includes a search bar that filters users in real-time:
+
+- Search by **name** (case-insensitive)
+- Search by **email** (case-insensitive)
+- Results update instantly as you type
+
+```
+Buscar por nombre o email...
+```
+
+### Pagination
+
+User lists are paginated with **10 users per page**. Use the pagination controls at the bottom of the table to navigate between pages.
+
+### Role Badges
+
+Roles are displayed with color-coded badges for quick identification:
+
+<CardGroup cols={2}>
+  <Card title="Admin Badge" icon="crown">
+    Red/Primary color badge: `Administrador`
+    
+    Styling: `bg-primary/20 text-primary`
+  </Card>
+  <Card title="Editor Badge" icon="user-pen">
+    Blue color badge: `Editor`
+    
+    Styling: `bg-blue-100 text-blue-800`
+  </Card>
+</CardGroup>
+
+### Loading States
+
+The interface provides visual feedback during operations:
+
+- **Spinner indicators** appear in the Actions column while processing
+- **Loading text** displays while fetching user data
+- **Disabled buttons** prevent multiple simultaneous operations
+
+## Last Access Tracking
+
+The system automatically tracks when users last accessed the admin dashboard:
+
+- **New users**: Display "Nunca" (Never) until first login
+- **Active users**: Show formatted timestamp of last access
+- **Format**: Argentine locale format (es-AR) with date and time
+
+Example: `10/3/2026, 14:35:22`
+
+<Info>
+  Last access tracking helps administrators monitor active users and identify inactive accounts.
+</Info>
+
+## User Service Architecture
+
+The user management system is powered by `userService.ts` with the following key functions:
+
+### Core Functions
+
+<Tabs>
+  <Tab title="Add User">
+    ```typescript
+    addUser(userData: Omit<User, 'id' | 'createdAt' | 'lastAccess'>)
+    ```
+    
+    Creates a new user with:
+    - Auto-generated unique ID: `USER-{timestamp}-{random}`
+    - Creation timestamp
+    - Null last access (until first login)
+    - Lowercase email normalization
+    - Duplicate email validation
+  </Tab>
+  <Tab title="Update User">
+    ```typescript
+    updateUser(updatedUser: User)
+    ```
+    
+    Updates existing user with:
+    - Email uniqueness validation (excluding current user)
+    - Preservation of creation date
+    - Preservation of last access timestamp
+    - Firebase merge operation
+  </Tab>
+  <Tab title="Delete User">
+    ```typescript
+    deleteUser(userId: string)
+    ```
+    
+    Permanently removes user from:
+    - Firebase Users collection
+    - Local cache
+    - Active session data
+  </Tab>
+</Tabs>
+
+### Data Synchronization
+
+User data is synchronized using:
+
+1. **Firebase Realtime Listeners** (AdminDashboard.tsx:106-132)
+   - Automatic updates when users are added/edited/deleted
+   - Real-time sync across all connected admin sessions
+
+2. **Local Cache** (localStorage)
+   - Key: `pizzeria-users`
+   - Fallback when Firebase is unavailable
+   - Seeding mechanism for empty Firebase collections
+
+3. **Optimistic Updates**
+   - UI updates immediately
+   - Firebase sync happens in background
+   - Error handling with rollback if needed
+
+## Permissions and Security
+
+### Access Control
+
+The Users panel implements role-based restrictions:
+
+- Only **Admin** users can access the Users panel
+- Editor users see the panel greyed out or hidden in navigation
+- All user operations require Admin privileges
+
+<Warning>
+  There is no built-in protection against deleting the last Admin user. Exercise caution when managing Admin accounts to avoid losing administrative access.
+</Warning>
+
+### Email Validation
+
+Email addresses undergo validation:
+
+1. **Uniqueness Check**: Prevents duplicate emails across all users
+2. **Lowercase Normalization**: All emails stored in lowercase
+3. **Required Field**: Cannot be empty
+4. **Format Validation**: Basic email format checking
+
+### Error Handling
+
+The system provides clear error messages:
+
+- **Duplicate Email**: "Ya existe un usuario con el email [email]."
+- **User Not Found**: "Usuario no encontrado para actualizar."
+- **Firebase Errors**: "Error al guardar usuario en la nube: [message]"
+- **General Errors**: Fallback error messages with toast notifications
+
+## Empty State
+
+When no users exist in the system:
+
+![Empty Users State]
+An empty state graphic appears with:
+- Users icon illustration
+- Message: "No hay usuarios registrados"
+- Subtext: "Comienza agregando tu primer usuario."
+
+<Note>
+  In production, you should always have at least one Admin user to manage the system.
+</Note>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Maintain Admin Access" icon="user-shield">
+    Always keep at least 2 Admin users to prevent lockout scenarios
+  </Card>
+  <Card title="Use Descriptive Names" icon="id-badge">
+    Use full names to easily identify users in the system
+  </Card>
+  <Card title="Monitor Last Access" icon="clock">
+    Regularly review last access times to identify inactive accounts
+  </Card>
+  <Card title="Role Principle of Least Privilege" icon="lock">
+    Grant Editor role by default, promote to Admin only when necessary
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### User Cannot Login
+
+- Verify user account exists in Users panel
+- Check email address is correct (case-insensitive)
+- Ensure user has been created successfully in Firebase
+
+### Duplicate Email Error
+
+- Search for existing user with that email
+- Edit existing user instead of creating new one
+- Use a different email address
+
+### Changes Not Reflecting
+
+- Check Firebase connection status in header
+- Refresh the dashboard
+- Verify Firebase permissions and authentication
+
+<Card title="Next Steps" icon="arrow-right">
+  Learn about tracking performance metrics and chat history in [Analytics](/admin/analytics).
+</Card>

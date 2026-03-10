@@ -1,0 +1,676 @@
+---
+title: 'Firebase Setup'
+description: 'Configure Firebase for real-time data storage and authentication'
+icon: 'fire'
+---
+
+## Overview
+
+Firebase provides the primary real-time database (Firestore) for Ai Studio, complementing the Google Sheets integration. It handles real-time data synchronization, user authentication, and serves as the source of truth for application state.
+
+## Features
+
+- **Firestore Database**: NoSQL real-time database for application data
+- **Real-time Listeners**: Automatic UI updates when data changes
+- **Offline Support**: Local data persistence and automatic sync
+- **Modular SDK**: Firebase v9+ modular imports for optimal bundle size
+- **Type Safety**: Full TypeScript support
+- **Dual Storage**: Works alongside Google Sheets for redundancy
+
+## Project Setup
+
+<Steps>
+  <Step title="Create Firebase Project">
+    1. Go to [Firebase Console](https://console.firebase.google.com/)
+    2. Click **Add Project**
+    3. Enter project name (e.g., "ai-studio-production")
+    4. Enable Google Analytics (optional)
+    5. Click **Create Project**
+  </Step>
+
+  <Step title="Register Web App">
+    1. In your Firebase project, click the **Web** icon (`</>`)
+    2. Register your app with a nickname (e.g., "Ai Studio Web")
+    3. Check "Also set up Firebase Hosting" if desired
+    4. Click **Register app**
+    5. Copy the `firebaseConfig` object
+  </Step>
+
+  <Step title="Enable Firestore">
+    1. Navigate to **Firestore Database** in the left menu
+    2. Click **Create database**
+    3. Choose **Production mode** (we'll configure rules later)
+    4. Select a location close to your users
+    5. Click **Enable**
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Create a `.env` file with your Firebase configuration:
+
+    ```bash
+    VITE_FIREBASE_API_KEY="AIzaSy..."
+    VITE_FIREBASE_AUTH_DOMAIN="your-app.firebaseapp.com"
+    VITE_FIREBASE_PROJECT_ID="your-project-id"
+    VITE_FIREBASE_STORAGE_BUCKET="your-app.appspot.com"
+    VITE_FIREBASE_MESSAGING_SENDER_ID="123456789"
+    VITE_FIREBASE_APP_ID="1:123456789:web:abc123"
+    VITE_FIREBASE_MEASUREMENT_ID="G-XXXXXXXXXX"
+    ```
+
+    <Warning>
+      Never commit `.env` files to version control. Add `.env` to your `.gitignore`.
+    </Warning>
+  </Step>
+</Steps>
+
+## Firebase Configuration
+
+The Firebase configuration is initialized in `services/firebase.ts`:
+
+```typescript services/firebase.ts:1
+import { initializeApp, getApp, getApps } from 'firebase/app';
+import { 
+    getFirestore, 
+    collection, 
+    getDocs, 
+    doc, 
+    setDoc, 
+    addDoc, 
+    deleteDoc, 
+    writeBatch, 
+    onSnapshot, 
+    query, 
+    where, 
+    getDoc, 
+    updateDoc,
+    orderBy,
+    limit,
+    serverTimestamp,
+    Timestamp,
+} from 'firebase/firestore';
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+};
+
+// Initialize Firebase (singleton pattern)
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
+
+export { 
+    db, 
+    collection, 
+    getDocs, 
+    doc, 
+    setDoc, 
+    addDoc, 
+    deleteDoc, 
+    writeBatch, 
+    onSnapshot, 
+    query, 
+    where, 
+    getDoc, 
+    updateDoc,
+    orderBy,
+    limit,
+    serverTimestamp,
+    Timestamp,
+};
+```
+
+<Note>
+  The configuration uses a singleton pattern (`getApps().length === 0`) to prevent multiple Firebase initializations, which would cause errors.
+</Note>
+
+## Firestore Collections
+
+Ai Studio uses these Firestore collections:
+
+### Core Collections
+
+| Collection | Purpose | Document Structure |
+|------------|---------|--------------------|
+| **products** | Menu items and inventory | `{ id, category, name, description, price, imageUrl }` |
+| **orders** | Customer orders | `{ id, customer, items[], total, status, type, createdAt, statusHistory[] }` |
+| **reservations** | Table reservations | `{ id, customerName, customerPhone, guests, reservationTime, tableIds[], status }` |
+| **customers** | Customer profiles | `{ id, name, phone, email, address, categoryId, createdAt }` |
+| **tables** | Restaurant tables | `{ id, name, capacity, allowsReservations, overrideStatus }` |
+| **categories** | Product categories | `{ id, name, imageUrl, color }` |
+| **promotions** | Special offers | `{ id, name, items[], price, isActive, imageUrl }` |
+
+### Configuration Collections
+
+| Collection | Purpose | Document Structure |
+|------------|---------|--------------------|
+| **schedule** | Business hours | `{ day, isOpen, slots[] }` |
+| **scheduleExceptions** | Holidays/closures | `{ id, name, startDate, endDate, type, slots[] }` |
+| **reservationSettings** | Booking rules | `{ duration, minBookingTime, slotInterval }` |
+| **customerCategories** | Customer segments | `{ id, name, color }` |
+
+### Analytics Collections
+
+| Collection | Purpose | Document Structure |
+|------------|---------|--------------------|
+| **sliceBotMetrics** | AI bot statistics | `{ distinctCustomers, totalMessages, tokensUsed, ordersMade }` |
+| **chatHistory** | AI conversations | `{ id, startTime, messages[], outcome, tokensUsed }` |
+| **whatsappBotMetrics** | WhatsApp bot stats | `{ distinctCustomers, totalMessages, ordersMade }` |
+| **WhastappAssistant_logs** | WhatsApp events | `{ timestamp, eventName, projectId, details, rawPayload }` |
+| **WhatsappsHistory** | WhatsApp messages | `{ timestamp, messageId, direction, from, to, body, mediaUrl }` |
+
+## Basic CRUD Operations
+
+### Create Document
+
+<CodeGroup>
+```typescript Auto-Generated ID
+import { db, collection, addDoc } from './services/firebase';
+
+const newOrder = {
+    customer: { name: 'John Doe', phone: '1234567890' },
+    items: [
+        { id: 'PROD-1', name: 'Pizza', quantity: 2, price: 15.99 }
+    ],
+    total: 31.98,
+    status: 'Pendiente',
+    createdAt: new Date().toISOString()
+};
+
+const docRef = await addDoc(collection(db, 'orders'), newOrder);
+console.log('Created order:', docRef.id);
+```
+
+```typescript Custom ID
+import { db, doc, setDoc } from './services/firebase';
+
+const customerId = 'CUST-123';
+const customer = {
+    id: customerId,
+    name: 'Jane Smith',
+    phone: '9876543210',
+    email: 'jane@example.com',
+    createdAt: new Date().toISOString()
+};
+
+await setDoc(doc(db, 'customers', customerId), customer);
+```
+</CodeGroup>
+
+### Read Documents
+
+<CodeGroup>
+```typescript Get Single Document
+import { db, doc, getDoc } from './services/firebase';
+
+const docRef = doc(db, 'orders', 'ORD-123');
+const docSnap = await getDoc(docRef);
+
+if (docSnap.exists()) {
+    console.log('Order data:', docSnap.data());
+} else {
+    console.log('Order not found');
+}
+```
+
+```typescript Get All Documents
+import { db, collection, getDocs } from './services/firebase';
+
+const querySnapshot = await getDocs(collection(db, 'products'));
+const products = querySnapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+}));
+```
+
+```typescript Query Documents
+import { db, collection, query, where, getDocs } from './services/firebase';
+
+// Get active orders
+const q = query(
+    collection(db, 'orders'),
+    where('status', '==', 'Pendiente')
+);
+
+const querySnapshot = await getDocs(q);
+const activeOrders = querySnapshot.docs.map(doc => doc.data());
+```
+</CodeGroup>
+
+### Update Document
+
+<CodeGroup>
+```typescript Partial Update
+import { db, doc, updateDoc } from './services/firebase';
+
+const orderRef = doc(db, 'orders', 'ORD-123');
+await updateDoc(orderRef, {
+    status: 'En Preparación',
+    updatedAt: new Date().toISOString()
+});
+```
+
+```typescript Full Replace
+import { db, doc, setDoc } from './services/firebase';
+
+const orderRef = doc(db, 'orders', 'ORD-123');
+const updatedOrder = {
+    // Complete new object
+    customer: { ... },
+    items: [ ... ],
+    status: 'Completado'
+};
+
+await setDoc(orderRef, updatedOrder);
+```
+</CodeGroup>
+
+### Delete Document
+
+```typescript
+import { db, doc, deleteDoc } from './services/firebase';
+
+await deleteDoc(doc(db, 'orders', 'ORD-123'));
+```
+
+## Real-time Listeners
+
+Firestore's real-time capabilities automatically sync data across clients:
+
+### Listen to Collection
+
+```typescript
+import { db, collection, onSnapshot } from './services/firebase';
+
+const unsubscribe = onSnapshot(
+    collection(db, 'orders'),
+    (snapshot) => {
+        const orders = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        console.log('Orders updated:', orders);
+        // Update your UI here
+    },
+    (error) => {
+        console.error('Error listening to orders:', error);
+    }
+);
+
+// Stop listening when component unmounts
+// unsubscribe();
+```
+
+### Listen to Single Document
+
+```typescript
+import { db, doc, onSnapshot } from './services/firebase';
+
+const unsubscribe = onSnapshot(
+    doc(db, 'orders', 'ORD-123'),
+    (doc) => {
+        if (doc.exists()) {
+            console.log('Order updated:', doc.data());
+        }
+    }
+);
+```
+
+### Listen with Query
+
+```typescript
+import { db, collection, query, where, onSnapshot } from './services/firebase';
+
+const q = query(
+    collection(db, 'orders'),
+    where('status', '==', 'Pendiente')
+);
+
+const unsubscribe = onSnapshot(q, (snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+            console.log('New order:', change.doc.data());
+        }
+        if (change.type === 'modified') {
+            console.log('Modified order:', change.doc.data());
+        }
+        if (change.type === 'removed') {
+            console.log('Removed order:', change.doc.data());
+        }
+    });
+});
+```
+
+## Advanced Queries
+
+### Multiple Conditions
+
+```typescript
+import { db, collection, query, where, getDocs } from './services/firebase';
+
+const q = query(
+    collection(db, 'orders'),
+    where('status', '==', 'Pendiente'),
+    where('type', '==', 'delivery')
+);
+
+const orders = (await getDocs(q)).docs.map(doc => doc.data());
+```
+
+### Sorting and Limiting
+
+```typescript
+import { db, collection, query, orderBy, limit, getDocs } from './services/firebase';
+
+// Get 10 most recent orders
+const q = query(
+    collection(db, 'orders'),
+    orderBy('createdAt', 'desc'),
+    limit(10)
+);
+
+const recentOrders = (await getDocs(q)).docs.map(doc => doc.data());
+```
+
+### Range Queries
+
+```typescript
+import { db, collection, query, where, Timestamp, getDocs } from './services/firebase';
+
+// Get orders from last 7 days
+const sevenDaysAgo = Timestamp.fromDate(
+    new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+);
+
+const q = query(
+    collection(db, 'orders'),
+    where('createdAt', '>=', sevenDaysAgo)
+);
+
+const recentOrders = (await getDocs(q)).docs.map(doc => doc.data());
+```
+
+## Batch Operations
+
+Batch writes allow multiple operations in a single atomic transaction:
+
+```typescript
+import { db, doc, writeBatch } from './services/firebase';
+
+const batch = writeBatch(db);
+
+// Update multiple orders at once
+batch.update(doc(db, 'orders', 'ORD-1'), { status: 'Completado' });
+batch.update(doc(db, 'orders', 'ORD-2'), { status: 'Completado' });
+batch.update(doc(db, 'orders', 'ORD-3'), { status: 'Completado' });
+
+// Create a new document
+batch.set(doc(db, 'metrics', 'daily'), {
+    ordersCompleted: 3,
+    date: new Date().toISOString()
+});
+
+// Delete a document
+batch.delete(doc(db, 'temp', 'old-data'));
+
+// Commit all operations atomically
+await batch.commit();
+```
+
+<Note>
+  Batch operations are atomic - either all succeed or all fail. Maximum 500 operations per batch.
+</Note>
+
+## Server Timestamps
+
+Use server timestamps for accurate, synchronized time:
+
+```typescript
+import { db, doc, setDoc, serverTimestamp } from './services/firebase';
+
+await setDoc(doc(db, 'orders', 'ORD-123'), {
+    customer: { ... },
+    items: [ ... ],
+    createdAt: serverTimestamp(), // Uses Firebase server time
+    updatedAt: serverTimestamp()
+});
+```
+
+## WhatsApp Bot Logging
+
+The WhatsApp service logs status changes to Firestore:
+
+```typescript services/whatsappBotService.ts:234
+import { db, addDoc, collection } from './firebase';
+
+export const logStatusChange = async (
+    status: string,
+    details: string
+): Promise<void> => {
+    try {
+        const logEntry = {
+            timestamp: new Date().toISOString(),
+            eventName: 'status.change.frontend',
+            projectId: 'e40701d9-d93a-451f-9d5b-5cb02c237add',
+            from: 'Frontend Panel',
+            details: details,
+            rawPayload: JSON.stringify({ status, details }),
+            unhandledStatus: '',
+            botStatus: status
+        };
+
+        await addDoc(collection(db, 'WhastappAssistant_logs'), logEntry);
+    } catch (error) {
+        console.error("Failed to log WhatsApp status change:", error);
+    }
+};
+```
+
+This creates audit trails for all bot status changes.
+
+## Security Rules
+
+Configure Firestore security rules to protect your data:
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read access to all authenticated users
+    match /{document=**} {
+      allow read: if request.auth != null;
+    }
+    
+    // Orders - authenticated users can create, update own orders
+    match /orders/{orderId} {
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.createdBy;
+    }
+    
+    // Products - read-only for users, write for admin
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+    
+    // Customer data - users can only access their own data
+    match /customers/{customerId} {
+      allow read, write: if request.auth != null && request.auth.uid == customerId;
+    }
+    
+    // Logs - append-only
+    match /WhastappAssistant_logs/{logId} {
+      allow read: if request.auth != null;
+      allow create: if true;
+      allow update, delete: if false;
+    }
+  }
+}
+```
+
+<Warning>
+  Review and customize security rules for your specific use case. Never use `allow read, write: if true;` in production.
+</Warning>
+
+## Offline Support
+
+Enable offline persistence for better UX:
+
+```typescript
+import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+
+const db = getFirestore(app);
+
+enableIndexedDbPersistence(db)
+    .catch((err) => {
+        if (err.code === 'failed-precondition') {
+            console.warn('Multiple tabs open, persistence can only be enabled in one tab at a time.');
+        } else if (err.code === 'unimplemented') {
+            console.warn('Browser doesn\'t support persistence.');
+        }
+    });
+```
+
+With offline persistence:
+- Data is cached locally
+- Writes work offline and sync when online
+- Queries return cached data immediately
+
+## Data Migration
+
+Migrate data from Google Sheets to Firestore:
+
+```typescript
+import { db, collection, writeBatch, doc } from './services/firebase';
+import apiService from './services/apiService';
+
+async function migrateFromSheets() {
+    // Get data from Google Sheets
+    const products = await apiService.get('Products');
+    const orders = await apiService.get('Orders');
+    
+    // Batch write to Firestore
+    const batch = writeBatch(db);
+    
+    products.forEach((product: any) => {
+        const docRef = doc(collection(db, 'products'), product.id);
+        batch.set(docRef, product);
+    });
+    
+    orders.forEach((order: any) => {
+        const docRef = doc(collection(db, 'orders'), order.id);
+        batch.set(docRef, order);
+    });
+    
+    await batch.commit();
+    console.log('Migration complete');
+}
+```
+
+## Performance Optimization
+
+### Use Indexes
+
+Create composite indexes for complex queries:
+
+1. Run your query in development
+2. Firebase will log an error with an index creation link
+3. Click the link to auto-generate the index
+4. Or manually create in Firebase Console > Firestore > Indexes
+
+### Limit Data Transfer
+
+```typescript
+import { db, collection, query, where, limit, getDocs } from './services/firebase';
+
+// Only get what you need
+const q = query(
+    collection(db, 'orders'),
+    where('status', '==', 'Pendiente'),
+    limit(20) // Don't load thousands of docs
+);
+```
+
+### Use Subcollections
+
+For hierarchical data, use subcollections:
+
+```typescript
+// Order items as subcollection
+const orderRef = doc(db, 'orders', 'ORD-123');
+const itemRef = doc(collection(orderRef, 'items'), 'ITEM-1');
+
+await setDoc(itemRef, {
+    productId: 'PROD-1',
+    quantity: 2,
+    price: 15.99
+});
+```
+
+## Monitoring and Debugging
+
+### Enable Debug Logging
+
+```typescript
+import { setLogLevel } from 'firebase/firestore';
+
+if (import.meta.env.DEV) {
+    setLogLevel('debug');
+}
+```
+
+### Monitor Usage
+
+1. Go to Firebase Console > Usage and billing
+2. Check document reads/writes/deletes
+3. Monitor storage usage
+4. Set up budget alerts
+
+### Error Handling
+
+```typescript
+import { db, doc, getDoc } from './services/firebase';
+
+try {
+    const docSnap = await getDoc(doc(db, 'orders', 'ORD-123'));
+    if (docSnap.exists()) {
+        return docSnap.data();
+    } else {
+        console.warn('Order not found');
+        return null;
+    }
+} catch (error: any) {
+    if (error.code === 'permission-denied') {
+        console.error('Access denied - check security rules');
+    } else if (error.code === 'unavailable') {
+        console.error('Firestore unavailable - check connection');
+    } else {
+        console.error('Firestore error:', error);
+    }
+    throw error;
+}
+```
+
+## Best Practices
+
+1. **Use Environment Variables**: Never hardcode Firebase config in source code
+2. **Initialize Once**: Use singleton pattern to avoid multiple Firebase apps
+3. **Unsubscribe Listeners**: Always clean up `onSnapshot` listeners
+4. **Batch Operations**: Use batch writes for multiple related updates
+5. **Index Queries**: Create indexes for all production queries
+6. **Limit Results**: Always use `limit()` to prevent excessive reads
+7. **Handle Errors**: Implement proper error handling for all operations
+8. **Security Rules**: Test rules thoroughly before deploying
+9. **Monitor Costs**: Track document operations to manage Firebase costs
+10. **Offline Support**: Enable persistence for better user experience
+
+## Related Documentation
+
+- [Google Sheets Integration](/integrations/google-sheets)
+- [WhatsApp Bot Integration](/integrations/whatsapp-bot)
+- [API Reference](/api/overview)

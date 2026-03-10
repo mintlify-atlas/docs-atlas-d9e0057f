@@ -1,0 +1,525 @@
+---
+title: 'Analytics & Metrics'
+description: 'Track AI bot performance, customer interactions, and business metrics in Ai Studio admin dashboard'
+icon: 'chart-line'
+---
+
+## Overview
+
+The Analytics system in Ai Studio provides comprehensive insights into your AI-powered assistants' performance. Monitor customer interactions, track conversion rates, and analyze chat histories for both the Slice web chatbot and WhatsApp bot.
+
+<Info>
+  Analytics data is collected automatically as customers interact with your AI assistants. All metrics are calculated in real-time and synced to Firebase.
+</Info>
+
+## Accessing Analytics
+
+Analytics are accessed through the **Bots Panel** in the admin dashboard:
+
+1. Navigate to **Bots** in the left sidebar
+2. Click **Ver Detalles** on any bot card to view detailed metrics
+3. Switch between Slice and WhatsApp bot analytics
+
+## Slice Bot Metrics
+
+The Slice web assistant tracks comprehensive interaction data defined in `types.ts:267-273`:
+
+```typescript
+interface SliceBotMetrics {
+    distinctCustomers: number;    // Unique customers served
+    totalMessages: number;        // Total messages exchanged
+    totalTokensUsed: number;      // Estimated AI tokens consumed
+    ordersMade: number;           // Orders placed via chatbot
+    reservationsMade: number;     // Reservations made via chatbot
+}
+```
+
+### Key Performance Indicators
+
+<CardGroup cols={3}>
+  <Card title="Customers Served" icon="users">
+    **distinctCustomers**
+    
+    Tracks unique chat sessions initiated by customers. Each new chat session increments this counter.
+  </Card>
+  <Card title="Total Messages" icon="message">
+    **totalMessages**
+    
+    Cumulative count of all messages (user + bot) exchanged across all chat sessions.
+  </Card>
+  <Card title="Tokens Used" icon="microchip">
+    **totalTokensUsed**
+    
+    Estimated AI processing tokens consumed. Based on ~4 characters per token calculation.
+  </Card>
+</CardGroup>
+
+<CardGroup cols={2}>
+  <Card title="Orders Placed" icon="cart-shopping">
+    **ordersMade**
+    
+    Number of successful orders created through the Slice chatbot interface.
+  </Card>
+  <Card title="Reservations Made" icon="calendar-check">
+    **reservationsMade**
+    
+    Number of successful reservations booked via the Slice assistant.
+  </Card>
+</CardGroup>
+
+### Metrics Dashboard View
+
+When viewing Slice bot details, metrics are displayed in color-coded cards:
+
+<Tabs>
+  <Tab title="Customer Metrics">
+    **Clientes Atendidos** - Blue icon
+    
+    Shows the total number of unique customers who have initiated chat sessions with Slice. This metric helps understand reach and customer engagement.
+  </Tab>
+  <Tab title="Message Volume">
+    **Mensajes Totales** - Teal icon
+    
+    Displays total message count including both customer messages and bot responses. High message counts indicate active engagement.
+  </Tab>
+  <Tab title="Token Usage">
+    **Tokens Usados (est.)** - Indigo icon
+    
+    Shows estimated AI token consumption with "~" prefix indicating approximation. Useful for tracking API usage costs.
+    
+    Formula: `ceil(text.length / 4)`
+  </Tab>
+  <Tab title="Conversion Metrics">
+    **Pedidos Realizados** - Green icon
+    
+    **Reservas Realizadas** - Purple icon
+    
+    These conversion metrics show how effectively the chatbot turns conversations into business outcomes.
+  </Tab>
+</Tabs>
+
+### Token Estimation
+
+Token usage is estimated using a simple calculation in `sliceBotMetricsService.ts:13-15`:
+
+```typescript
+const estimateTokens = (text: string): number => {
+    return Math.ceil((text || '').length / 4);
+};
+```
+
+<Note>
+  Token estimation is approximate and based on the industry standard of ~4 characters per token. Actual API token usage may vary.
+</Note>
+
+## WhatsApp Bot Metrics
+
+The WhatsApp assistant tracks similar metrics without token counting (defined in `types.ts:275-280`):
+
+```typescript
+interface WhatsAppBotMetrics {
+    distinctCustomers: number;    // Unique phone numbers
+    totalMessages: number;        // Total messages in/out
+    ordersMade: number;           // Orders via WhatsApp
+    reservationsMade: number;     // Reservations via WhatsApp
+}
+```
+
+### Key Differences from Slice Bot
+
+<CardGroup cols={2}>
+  <Card title="No Token Tracking" icon="xmark">
+    WhatsApp metrics don't include token usage since it's an external platform integration
+  </Card>
+  <Card title="Phone-Based Sessions" icon="phone">
+    Sessions are grouped by customer phone number (from field) rather than session IDs
+  </Card>
+</CardGroup>
+
+### Metrics Calculation
+
+WhatsApp metrics are calculated from the `WhatsappsHistory` sheet (`whatsappBotMetricsService.ts:73-84`):
+
+```typescript
+const distinctCustomers = new Set(history.map(msg => msg.from)).size;
+const totalMessages = history.length;
+const ordersMade = orders.filter(o => 
+    o.createdBy === CreatedBy.WHATSAPP_ASSISTANT
+).length;
+const reservationsMade = reservations.filter(r => 
+    r.createdBy === CreatedBy.WHATSAPP_ASSISTANT
+).length;
+```
+
+<Info>
+  WhatsApp metrics are fetched from Google Sheets via API and cached locally for performance.
+</Info>
+
+## Chat History
+
+Both bots maintain detailed chat history for analysis and review.
+
+### Chat Session Structure
+
+Each chat session is stored with the following structure (`types.ts:282-289`):
+
+```typescript
+interface ChatHistorySession {
+    id: string;                           // Session or customer identifier
+    startTime: string;                    // ISO timestamp of first message
+    messages: ChatMessage[];              // Array of message objects
+    outcome: 'order' | 'reservation' | null; // Conversation result
+    tokensUsed: number;                   // Tokens for this session (Slice only)
+    lastActivity: string;                 // ISO timestamp of last message
+}
+```
+
+### Message Structure
+
+```typescript
+interface ChatMessage {
+    sender: MessageSender;  // 'user' or 'bot'
+    text: string;           // Message content
+}
+```
+
+### Session Outcomes
+
+Chat sessions can have three outcome types:
+
+<Tabs>
+  <Tab title="Order">
+    **outcome: 'order'**
+    
+    The conversation resulted in a successful order placement. The `ordersMade` metric is incremented.
+    
+    This outcome is logged when a customer completes the order flow through the chatbot.
+  </Tab>
+  <Tab title="Reservation">
+    **outcome: 'reservation'**
+    
+    The conversation resulted in a successful reservation booking. The `reservationsMade` metric is incremented.
+    
+    This outcome is logged when a customer successfully books a table.
+  </Tab>
+  <Tab title="Inconcluso (Incomplete)">
+    **outcome: null**
+    
+    The conversation did not result in an order or reservation. This could indicate:
+    - Customer browsing or asking questions
+    - Abandoned conversation
+    - Information-seeking interaction
+    - Technical issues
+  </Tab>
+</Tabs>
+
+## Viewing Chat History
+
+### Slice Bot Chat History
+
+Slice bot sessions are displayed in an expandable list format:
+
+<Steps>
+  <Step title="Access Slice Details">
+    Navigate to Bots panel and click **Ver Detalles** on the Slice bot card
+  </Step>
+  <Step title="Scroll to History Section">
+    The chat history section shows "Historial de Chats (Últimos 100)"
+  </Step>
+  <Step title="View Session Summary">
+    Each session displays:
+    - Session start time (es-AR format)
+    - Outcome (Pedido, Reserva, or Inconcluso)
+    - Token usage estimate
+    - Message count
+  </Step>
+  <Step title="Expand Session">
+    Click any session to expand and view full message thread with:
+    - User messages (right-aligned, primary color background)
+    - Bot messages (left-aligned, gray background)
+    - User and bot icons for visual distinction
+  </Step>
+</Steps>
+
+### WhatsApp Bot Chat History
+
+WhatsApp sessions are displayed with customer phone numbers:
+
+<Steps>
+  <Step title="Access WhatsApp Details">
+    Navigate to Bots panel and click **Ver Detalles** on the WhatsApp bot card
+  </Step>
+  <Step title="View Customer List">
+    Sessions are grouped by customer phone number (the `from` field)
+  </Step>
+  <Step title="Review Session Info">
+    Each entry shows:
+    - Customer phone number
+    - Outcome (if any)
+    - Message count
+    - Last activity timestamp
+  </Step>
+  <Step title="Open Chat Modal">
+    Click a session to open a modal with the full conversation thread
+  </Step>
+</Steps>
+
+### Chat History Limits
+
+The system maintains a maximum of **100 chat sessions** per bot (`sliceBotMetricsService.ts:6`):
+
+```typescript
+const MAX_HISTORY_SESSIONS = 100;
+```
+
+<Note>
+  When the 101st session is created, the oldest session is automatically removed from the history cache. This keeps storage usage manageable while preserving recent interactions.
+</Note>
+
+## Session Lifecycle
+
+### Slice Bot Session Flow
+
+<Steps>
+  <Step title="Session Start">
+    When a customer opens the Slice chatbot, a new session is created:
+    
+    ```typescript
+    startSession(): string
+    ```
+    
+    - Generates unique session ID: `SESSION-{timestamp}-{random}`
+    - Increments `distinctCustomers` counter
+    - Initializes empty message array
+    - Sets `outcome` to null
+  </Step>
+  <Step title="Message Logging">
+    Each message (user or bot) is logged:
+    
+    ```typescript
+    logMessage(sessionId: string, message: ChatMessage)
+    ```
+    
+    - Adds message to session
+    - Estimates and adds token usage
+    - Increments `totalMessages` counter
+    - Updates `lastActivity` timestamp
+  </Step>
+  <Step title="Outcome Recording">
+    When order/reservation is completed:
+    
+    ```typescript
+    logOutcome(sessionId: string, outcome: 'order' | 'reservation')
+    ```
+    
+    - Sets session outcome (only once per session)
+    - Increments corresponding metric counter
+    - Updates `lastActivity` timestamp
+  </Step>
+</Steps>
+
+### WhatsApp Bot Session Flow
+
+WhatsApp sessions are reconstructed from message history:
+
+1. **Fetch History**: Retrieve all WhatsApp messages from Google Sheets
+2. **Group by Customer**: Messages grouped by phone number (`from` field)
+3. **Build Sessions**: Create session objects with all messages from that customer
+4. **Determine Outcome**: Check if customer has orders/reservations created via WhatsApp
+5. **Sort by Activity**: Display sessions ordered by last activity timestamp
+
+## Data Storage and Sync
+
+### Firebase Collections
+
+Analytics data is stored in Firebase:
+
+<Tabs>
+  <Tab title="Slice Metrics">
+    **Collection**: `SliceBotMetrics`
+    
+    **Document**: `main`
+    
+    Stores the aggregated metrics object. Real-time listener updates dashboard when metrics change.
+  </Tab>
+  <Tab title="Chat History">
+    **Collection**: `ChatHistory`
+    
+    **Documents**: One per session (session ID as document ID)
+    
+    Stores individual session objects. Query limited to 100 most recent sessions ordered by `startTime` descending.
+  </Tab>
+</Tabs>
+
+### Local Caching
+
+Metrics and chat history are cached in localStorage for offline access and performance:
+
+**Slice Bot Cache Key**: `pizzeria-slice-bot-metrics`
+
+**WhatsApp Bot Cache Key**: `pizzeria-whatsapp-bot-metrics`
+
+Cache structure:
+```typescript
+interface StoredData {
+    metrics: BotMetrics;
+    chatHistory: ChatHistorySession[];
+}
+```
+
+### Real-Time Updates
+
+The admin dashboard uses Firebase listeners to sync metrics in real-time (`AdminDashboard.tsx:153-158`):
+
+```typescript
+const unsubSliceMetrics = onSnapshot(sliceMetricsDocRef, (docSnap) => {
+    if (docSnap.exists()) {
+        updateMetricsCache(docSnap.data() as SliceBotMetrics);
+        setDataTimestamp(Date.now());
+    }
+});
+```
+
+<Info>
+  Any changes to bot metrics are instantly reflected across all connected admin sessions without requiring page refresh.
+</Info>
+
+## Bot Status Tracking
+
+### Connection Time Tracking
+
+Both bots track their connection uptime:
+
+<CardGroup cols={2}>
+  <Card title="Slice Bot" icon="robot">
+    Tracks connection time when status is `active`
+    
+    Displayed as live uptime counter in bot details
+  </Card>
+  <Card title="WhatsApp Bot" icon="whatsapp">
+    Tracks connection time from QR code scan completion
+    
+    Persisted in localStorage for session persistence
+  </Card>
+</CardGroup>
+
+### Last Update Timestamp
+
+Each bot shows when its status was last refreshed:
+
+- Slice: Updated when status changes or manual refresh
+- WhatsApp: Updated via polling (15s when viewing, 30s in background)
+
+## Metrics Dashboard Interface
+
+### Grid View
+
+The main Bots panel shows bot cards in a 2-column grid with:
+
+- Bot icon and name
+- Connection status indicator (colored dot)
+- Uptime timer (if active)
+- Last update timestamp
+- Action buttons (Connect/Disconnect, Ver Detalles)
+
+### Details View
+
+Clicking "Ver Detalles" switches to a full-screen metrics view with:
+
+- **Header**: Bot name with close button
+- **Metrics Grid**: Color-coded KPI cards
+- **Chat History Section**: Scrollable list of sessions
+- **Expandable Sessions**: Click to view message threads
+
+## Analyzing Bot Performance
+
+### Conversion Rate
+
+Calculate bot effectiveness:
+
+```
+Conversion Rate = (ordersMade + reservationsMade) / distinctCustomers * 100
+```
+
+Higher conversion rates indicate the bot is effectively guiding customers to complete transactions.
+
+### Engagement Metrics
+
+Analyze customer engagement:
+
+```
+Average Messages per Session = totalMessages / distinctCustomers
+```
+
+Higher message counts may indicate either strong engagement or confusion requiring more clarification.
+
+### Token Efficiency (Slice Bot)
+
+Monitor AI usage costs:
+
+```
+Average Tokens per Customer = totalTokensUsed / distinctCustomers
+Average Tokens per Message = totalTokensUsed / totalMessages
+```
+
+<Note>
+  Monitor token usage to estimate API costs and optimize bot prompt efficiency.
+</Note>
+
+## Outcome Tracking
+
+Understand conversation results by analyzing outcome distribution:
+
+- **High Order Rate**: Bot effectively assists with purchases
+- **High Reservation Rate**: Bot successfully handles bookings
+- **High Inconcluso Rate**: May indicate need for bot training improvements
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Regular Review" icon="calendar">
+    Check bot metrics daily to identify trends and issues early
+  </Card>
+  <Card title="Analyze Inconclusive Chats" icon="magnifying-glass">
+    Review conversations without outcomes to improve bot responses
+  </Card>
+  <Card title="Monitor Token Usage" icon="chart-line">
+    Track token consumption to manage API costs effectively
+  </Card>
+  <Card title="Compare Bot Performance" icon="balance-scale">
+    Compare Slice vs WhatsApp metrics to optimize channel strategy
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Metrics Not Updating
+
+- Check Firebase connection status in dashboard header
+- Verify bot is active and processing messages
+- Refresh the page to force cache reload
+- Check browser console for sync errors
+
+### Missing Chat History
+
+- Verify session limit hasn't been exceeded (100 max)
+- Check that messages are being logged in real-time
+- Ensure Firebase permissions allow read access
+
+### Incorrect Token Counts
+
+- Remember token estimates are approximate (~4 chars/token)
+- Long messages may show higher token usage
+- Special characters may affect estimation accuracy
+
+## Export and Reporting
+
+While the dashboard doesn't currently support direct export, metrics can be:
+
+- Viewed in Firebase Console for raw data access
+- Monitored through Firebase Analytics integration
+- Extracted via Firebase Admin SDK for custom reports
+
+<Card title="Related Documentation" icon="book">
+  Learn how to manage bot activation and configuration in the [Dashboard Overview](/admin/dashboard-overview) under the Bots Panel section.
+</Card>

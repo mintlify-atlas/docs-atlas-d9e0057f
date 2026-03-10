@@ -1,0 +1,497 @@
+---
+title: 'Order Management'
+description: 'Complete order workflow from creation to completion with multi-channel support'
+icon: 'shopping-cart'
+---
+
+## Overview
+
+The Order Management system is the core of Ai Studio's operations, handling all customer orders from intake through fulfillment. The system supports three order types: pickup, delivery, and dine-in, with intelligent status tracking and payment verification.
+
+### Key Benefits
+
+- **Multi-channel Order Intake**: Accept orders from admin panel, web assistant (Slice), or WhatsApp bot
+- **Real-time Status Tracking**: Monitor orders through 10 distinct lifecycle states
+- **Payment Verification**: Track payment method and approval status before completion
+- **Firebase Sync**: All orders sync in real-time across devices and interfaces
+- **Comprehensive History**: Full audit trail with status timestamps
+
+## Order Types
+
+The system supports three distinct order types, each with its own workflow:
+
+<Tabs>
+  <Tab title="Pickup">
+    Customers order ahead and collect at the restaurant.
+    
+    **Payment Options**: Cash or Credit (customer selects at order time)
+    
+    **Typical Flow**:
+    ```
+    Pending → Confirmed → Preparing → Ready → Completed (Pickup)
+    ```
+  </Tab>
+  
+  <Tab title="Delivery">
+    Orders delivered to customer's address.
+    
+    **Payment**: Transfer only (prepayment required)
+    
+    **Typical Flow**:
+    ```
+    Pending → Confirmed → Preparing → Ready → Delivering → Completed (Delivery)
+    ```
+  </Tab>
+  
+  <Tab title="Dine-In">
+    Customers order while seated at a table.
+    
+    **Payment**: Cash, Credit, or Transfer (after dining)
+    
+    **Typical Flow**:
+    ```
+    Pending → Confirmed → Preparing → Dine-In (Pending Payment) → Completed (Dine-In)
+    ```
+  </Tab>
+</Tabs>
+
+## Order Data Structure
+
+### Order Interface
+
+From `types.ts:87-108`:
+
+```typescript
+export interface Order {
+  id: string;                          // Format: ORD-{timestamp}-{random}
+  customer: {
+    name: string;
+    phone?: string;
+    address?: string;                  // Required for delivery
+  };
+  items: OrderItem[];                  // Products in the order
+  total: number;                       // Total price
+  status: OrderStatus;                 // Current status
+  type: OrderType;                     // pickup | delivery | dine-in
+  createdAt: string;                   // ISO timestamp
+  statusHistory: StatusHistory[];      // Full audit trail
+  finishedAt: string | null;           // When order completed/cancelled
+  tableIds?: string[];                 // For dine-in orders
+  guests?: number;                     // Number of diners
+  paymentMethod: PaymentMethod;        // Cash | Credit | Transfer
+  isPaid: boolean;                     // Payment approval status
+  paymentProofUrl?: string | null;     // Transfer receipt URL
+  reservationId?: string;              // Link to reservation if applicable
+  createdBy: CreatedBy;                // Admin | Web Assistant | WhatsApp
+}
+```
+
+### Order Item Structure
+
+From `types.ts:79-85`:
+
+```typescript
+export interface OrderItem {
+  name: string;            // Product name
+  quantity: number;        // How many
+  price: number;          // Unit price
+  isPromotion: boolean;   // Whether this is a promotion item
+  itemId: string;         // Product or Promotion ID
+}
+```
+
+## Order Statuses
+
+From `types.ts:48-59`, the system defines 10 order statuses:
+
+```typescript
+export enum OrderStatus {
+  PENDING = 'Pendiente',                              // Initial state
+  CONFIRMED = 'Confirmado',                           // Order accepted
+  PREPARING = 'En Preparación',                       // Kitchen working
+  READY = 'Listo para Retirar/Entregar',             // Ready for next step
+  DELIVERING = 'En Camino',                           // Delivery in progress
+  DINE_IN_PENDING_PAYMENT = 'En Mesa (Pendiente de Pago)',  // Waiting for payment
+  COMPLETED_PICKUP = 'Completado (Retirado)',        // Pickup completed
+  COMPLETED_DELIVERY = 'Completado (Entregado)',     // Delivery completed
+  COMPLETED_DINE_IN = 'Completado (En Mesa)',        // Dine-in completed
+  CANCELLED = 'Cancelado',                            // Order cancelled
+}
+```
+
+<Note>
+The system tracks finished orders as any status in: `COMPLETED_PICKUP`, `COMPLETED_DELIVERY`, `COMPLETED_DINE_IN`, or `CANCELLED`.
+</Note>
+
+## Payment Methods
+
+From `types.ts:67-71`:
+
+```typescript
+export enum PaymentMethod {
+  CASH = 'Efectivo',
+  CREDIT = 'Credito',
+  TRANSFER = 'Transferencia',
+}
+```
+
+### Payment Rules
+
+<Warning>
+**Critical Payment Validations**:
+
+- Orders **cannot** be marked as completed unless `isPaid: true`
+- Delivery orders **must** use Transfer payment method
+- Pickup orders can use Cash or Credit
+- Dine-in orders accept all payment methods
+- Payment proof URL can be attached for transfers
+</Warning>
+
+## Core Service Functions
+
+From `services/orderService.ts`:
+
+### Creating Orders
+
+```typescript
+saveOrder(
+  orderData: Omit<Order, 'id' | 'status' | 'createdAt' | 'statusHistory' | 'finishedAt' | 'isPaid'>
+): Promise<Order>
+```
+
+**Example Usage**:
+
+```typescript
+import { saveOrder } from './services/orderService';
+import { OrderType, PaymentMethod, CreatedBy } from './types';
+
+const newOrder = await saveOrder({
+  customer: {
+    name: 'Juan Pérez',
+    phone: '1234567890',
+    address: 'Calle Falsa 123'
+  },
+  items: [
+    {
+      name: 'Pizza Muzzarella',
+      quantity: 2,
+      price: 9200,
+      isPromotion: false,
+      itemId: 'PROD-123'
+    }
+  ],
+  total: 18400,
+  type: OrderType.DELIVERY,
+  paymentMethod: PaymentMethod.TRANSFER,
+  createdBy: CreatedBy.ADMIN,
+});
+
+// Returns order with:
+// - Auto-generated ID (ORD-{timestamp}-{random})
+// - status: PENDING
+// - isPaid: false (unless paymentProofUrl provided)
+// - statusHistory initialized
+```
+
+### Updating Order Status
+
+```typescript
+updateOrderStatus(
+  orderId: string,
+  status: OrderStatus
+): Promise<Order>
+```
+
+**Example**:
+
+```typescript
+import { updateOrderStatus } from './services/orderService';
+import { OrderStatus } from './types';
+
+// Move order to next stage
+const updatedOrder = await updateOrderStatus(
+  'ORD-1234567890-abc',
+  OrderStatus.PREPARING
+);
+
+// System automatically:
+// - Adds status to statusHistory with timestamp
+// - Sets finishedAt if moving to completed/cancelled status
+// - Creates notification for status change
+// - Syncs to Firebase
+```
+
+<Warning>
+**Status Transition Rules**:
+
+- Cannot change status of already-finished orders
+- Cannot complete order unless `isPaid: true`
+- Completing order automatically sets `isPaid: true` (except for cancelled)
+</Warning>
+
+### Managing Payment Status
+
+```typescript
+markOrderAsPaid(
+  orderId: string,
+  paymentMethod: PaymentMethod,
+  paymentProofUrl?: string | null
+): Promise<Order>
+```
+
+**Example**:
+
+```typescript
+import { markOrderAsPaid } from './services/orderService';
+import { PaymentMethod } from './types';
+
+// Record payment for delivery order
+const paidOrder = await markOrderAsPaid(
+  'ORD-1234567890-abc',
+  PaymentMethod.TRANSFER,
+  'https://storage.example.com/receipt123.jpg'
+);
+
+// For dine-in orders at DINE_IN_PENDING_PAYMENT:
+// - Automatically transitions to COMPLETED_DINE_IN
+// - Adds completion to statusHistory
+```
+
+### Retrieving Orders
+
+```typescript
+// Get all orders from cache (sorted newest first)
+getOrdersFromCache(): Order[]
+
+// Fetch latest from Firebase and update cache
+fetchAndCacheOrders(): Promise<Order[]>
+
+// Check if order is finished
+isOrderFinished(status: OrderStatus): boolean
+```
+
+## User Workflows
+
+### Admin Creating an Order
+
+<Steps>
+  <Step title="Navigate to Orders Panel">
+    From the admin sidebar, click "Orders" to view the OrdersPanel.
+  </Step>
+  
+  <Step title="Click 'Nuevo Pedido'">
+    Opens order creation form with fields for customer, items, and order details.
+  </Step>
+  
+  <Step title="Select Order Type">
+    Choose Pickup, Delivery, or Dine-In. This determines:
+    - Required fields (address for delivery, tables for dine-in)
+    - Available payment methods
+    - Status workflow
+  </Step>
+  
+  <Step title="Add Items">
+    Select products from the menu, specify quantities. System calculates total automatically.
+  </Step>
+  
+  <Step title="Enter Customer Details">
+    Name, phone, and address (if delivery). System may auto-suggest from customer database.
+  </Step>
+  
+  <Step title="Select Payment Method">
+    Based on order type:
+    - Delivery: Transfer (can upload payment proof)
+    - Pickup: Cash or Credit
+    - Dine-In: Any method (paid later)
+  </Step>
+  
+  <Step title="Submit Order">
+    Order created with status PENDING. Notification sent. Firebase sync immediate.
+  </Step>
+</Steps>
+
+### Processing Orders Through Kitchen
+
+<Steps>
+  <Step title="Confirm Order">
+    Admin reviews order, clicks "Confirmar" → Status: CONFIRMED
+  </Step>
+  
+  <Step title="Start Preparation">
+    Kitchen begins work, admin updates → Status: PREPARING
+  </Step>
+  
+  <Step title="Mark as Ready">
+    Order complete, admin marks ready → Status: READY
+  </Step>
+  
+  <Step title="Final Step (varies by type)">
+    - **Pickup**: Customer arrives → COMPLETED_PICKUP
+    - **Delivery**: Driver dispatched → DELIVERING → COMPLETED_DELIVERY
+    - **Dine-In**: Customer finishes → DINE_IN_PENDING_PAYMENT → (after payment) → COMPLETED_DINE_IN
+  </Step>
+</Steps>
+
+### AI Assistant Order Flow
+
+From `components/ChatAssistantModal.tsx` and `services/geminiService.ts`:
+
+<Steps>
+  <Step title="Customer Opens Chat">
+    Slice AI assistant greets customer, asks if they want to order or make a reservation.
+  </Step>
+  
+  <Step title="Customer Requests Order">
+    System sets `actionLock: 'order'` to focus conversation on ordering.
+  </Step>
+  
+  <Step title="Gather Order Details">
+    AI collects:
+    - Products and quantities from menu
+    - Delivery or pickup
+    - Customer name and phone
+    - Address (if delivery)
+    - Payment method (Transfer for delivery, Cash/Credit for pickup)
+  </Step>
+  
+  <Step title="AI Confirms Details">
+    Presents summary, asks for explicit confirmation.
+  </Step>
+  
+  <Step title="Generate Order JSON">
+    After confirmation, AI responds with structured JSON:
+    ```json
+    {
+      "intent": "ORDER",
+      "customer": { "name": "...", "phone": "...", "address": "..." },
+      "items": [...],
+      "total": 9200,
+      "type": "delivery",
+      "paymentMethod": "Transferencia"
+    }
+    ```
+  </Step>
+  
+  <Step title="System Creates Order">
+    `saveOrder()` called with `createdBy: WEB_ASSISTANT`. Order appears in admin panel immediately.
+  </Step>
+</Steps>
+
+## Real-Time Synchronization
+
+From `components/AdminDashboard.tsx:106-132`:
+
+Orders sync in real-time via Firebase listeners:
+
+```typescript
+// Admin dashboard subscribes to Orders collection
+const unsubOrders = onSnapshot(
+  collection(db, 'Orders'),
+  (querySnapshot) => {
+    const items = querySnapshot.docs.map(doc => doc.data() as Order);
+    updateOrdersCache(items);
+    setDataTimestamp(Date.now()); // Triggers UI refresh
+  }
+);
+```
+
+**Benefits**:
+- Multi-device admin access (changes appear instantly on all devices)
+- AI assistants create orders that appear immediately in admin panel
+- No manual refresh needed
+- Offline-first with localStorage fallback
+
+## Notifications
+
+From `components/AdminDashboard.tsx:175-187`:
+
+The system automatically generates notifications for:
+
+- **New Orders**: When first order arrives or latest order changes
+- **Status Changes**: Each status transition creates a notification
+
+```typescript
+// Auto-notification on new order
+if (currentOrders[0].id !== lastCheckedOrder.current) {
+  addNotification({
+    message: `Nuevo pedido de ${currentOrders[0].customer.name} por $${currentOrders[0].total}`,
+    type: 'order',
+    relatedId: currentOrders[0].id,
+  });
+}
+```
+
+## Order History & Audit Trail
+
+Every status change is recorded in `statusHistory`:
+
+```typescript
+export interface StatusHistory {
+  status: OrderStatus;
+  startedAt: string;  // ISO timestamp
+}
+```
+
+**Example status history**:
+```json
+[
+  { "status": "Pendiente", "startedAt": "2026-03-10T14:30:00.000Z" },
+  { "status": "Confirmado", "startedAt": "2026-03-10T14:32:15.000Z" },
+  { "status": "En Preparación", "startedAt": "2026-03-10T14:35:00.000Z" },
+  { "status": "Listo para Retirar/Entregar", "startedAt": "2026-03-10T14:50:00.000Z" },
+  { "status": "Completado (Retirado)", "startedAt": "2026-03-10T15:05:00.000Z" }
+]
+```
+
+## Configuration
+
+### Order Type Enum
+
+From `types.ts:61-65`:
+
+```typescript
+export enum OrderType {
+  PICKUP = 'pickup',
+  DELIVERY = 'delivery',
+  DINE_IN = 'dine-in',
+}
+```
+
+### Creation Source Tracking
+
+From `types.ts:73-77`:
+
+```typescript
+export enum CreatedBy {
+  ADMIN = 'Admin Panel',
+  WEB_ASSISTANT = 'Web Assistant',      // Slice chat
+  WHATSAPP_ASSISTANT = 'WhatsApp Assistant',
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Always Verify Payment" icon="credit-card">
+    Before marking an order as completed, ensure `isPaid: true`. The system enforces this rule.
+  </Card>
+  
+  <Card title="Use Correct Payment Methods" icon="money-bill">
+    Delivery must use Transfer. Pickup allows Cash/Credit. Dine-in accepts all methods.
+  </Card>
+  
+  <Card title="Track Order Source" icon="tag">
+    Use `createdBy` to understand which channel generated the order for analytics.
+  </Card>
+  
+  <Card title="Leverage Status History" icon="clock">
+    Use statusHistory for analytics, customer service, and performance tracking.
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Tables](/features/tables) - Dine-in orders link to table management
+- [Reservations](/features/reservations) - Orders can be created from reservations
+- [AI Assistants](/features/ai-assistants) - Automated order intake via Slice and WhatsApp
+- [Menu Management](/features/menu-management) - Products that populate order items

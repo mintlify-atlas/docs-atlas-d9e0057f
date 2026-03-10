@@ -1,0 +1,491 @@
+---
+title: Orders API
+description: Order management, status tracking, and payment processing
+icon: "receipt"
+---
+
+## Overview
+
+The Orders API manages the complete order lifecycle from creation to completion. It supports three order types: pickup, delivery, and dine-in, with full status tracking and payment management.
+
+## Order Management
+
+### getOrdersFromCache
+
+Retrieves orders from in-memory cache synchronously.
+
+```typescript
+export const getOrdersFromCache = (): Order[]
+```
+
+<ResponseField name="orders" type="Order[]">
+  Array of orders sorted by creation date (newest first)
+</ResponseField>
+
+---
+
+### fetchAndCacheOrders
+
+Fetches orders from Firebase and updates caches.
+
+```typescript
+export const fetchAndCacheOrders = async (): Promise<Order[]>
+```
+
+<ResponseField name="orders" type="Order[]">
+  Array of all orders from Firebase
+</ResponseField>
+
+**Behavior:**
+- Syncs with Firebase `Orders` collection
+- Updates local caches
+- Seeds Firebase from local if Firebase is empty
+- Falls back to cache on errors
+
+---
+
+### saveOrder
+
+Creates a new order.
+
+```typescript
+export const saveOrder = async (
+  orderData: Omit<Order, 'id' | 'status' | 'createdAt' | 'statusHistory' | 'finishedAt' | 'isPaid'>
+): Promise<Order>
+```
+
+<ParamField path="orderData" type="object" required>
+  Order data without auto-generated fields
+  
+  <Expandable title="properties">
+    <ParamField path="customer" type="object" required>
+      Customer information
+      <Expandable title="properties">
+        <ParamField path="name" type="string" required>
+          Customer name
+        </ParamField>
+        <ParamField path="phone" type="string">
+          Customer phone number
+        </ParamField>
+        <ParamField path="address" type="string">
+          Delivery address (required for delivery orders)
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField path="items" type="OrderItem[]" required>
+      Array of order items
+    </ParamField>
+    
+    <ParamField path="total" type="number" required>
+      Total order amount
+    </ParamField>
+    
+    <ParamField path="type" type="OrderType" required>
+      Order type: `OrderType.PICKUP`, `OrderType.DELIVERY`, or `OrderType.DINE_IN`
+    </ParamField>
+    
+    <ParamField path="paymentMethod" type="PaymentMethod" required>
+      Payment method: `PaymentMethod.CASH`, `PaymentMethod.CREDIT`, or `PaymentMethod.TRANSFER`
+    </ParamField>
+    
+    <ParamField path="tableIds" type="string[]">
+      Table IDs for dine-in orders
+    </ParamField>
+    
+    <ParamField path="guests" type="number">
+      Number of guests for dine-in orders
+    </ParamField>
+    
+    <ParamField path="paymentProofUrl" type="string">
+      URL to payment proof image
+    </ParamField>
+    
+    <ParamField path="reservationId" type="string">
+      Associated reservation ID
+    </ParamField>
+    
+    <ParamField path="createdBy" type="CreatedBy" required>
+      Order origin: `CreatedBy.ADMIN`, `CreatedBy.WEB_ASSISTANT`, or `CreatedBy.WHATSAPP_ASSISTANT`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="order" type="Order">
+  The created order with:
+  - Generated ID (format: `ORD-{timestamp}-{random}`)
+  - Initial status: `OrderStatus.PENDING`
+  - Created timestamp
+  - Status history initialized
+  - `isPaid` set based on payment proof URL
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { saveOrder, OrderType, PaymentMethod, CreatedBy } from './services/orderService';
+
+const order = await saveOrder({
+  customer: {
+    name: "Juan Pérez",
+    phone: "+5491123456789",
+    address: "Av. Corrientes 1234, Buenos Aires"
+  },
+  items: [
+    {
+      name: "Pizza Muzzarella",
+      quantity: 2,
+      price: 9200,
+      isPromotion: false,
+      itemId: "PROD-123"
+    }
+  ],
+  total: 18400,
+  type: OrderType.DELIVERY,
+  paymentMethod: PaymentMethod.TRANSFER,
+  createdBy: CreatedBy.WEB_ASSISTANT
+});
+
+console.log('Order created:', order.id);
+```
+
+```typescript Response
+{
+  id: "ORD-1709876543210-abc12",
+  customer: {
+    name: "Juan Pérez",
+    phone: "+5491123456789",
+    address: "Av. Corrientes 1234, Buenos Aires"
+  },
+  items: [
+    {
+      name: "Pizza Muzzarella",
+      quantity: 2,
+      price: 9200,
+      isPromotion: false,
+      itemId: "PROD-123"
+    }
+  ],
+  total: 18400,
+  type: "delivery",
+  paymentMethod: "Transferencia",
+  status: "Pendiente",
+  createdAt: "2024-03-08T10:15:43.210Z",
+  statusHistory: [
+    { status: "Pendiente", startedAt: "2024-03-08T10:15:43.210Z" }
+  ],
+  finishedAt: null,
+  isPaid: false,
+  createdBy: "Web Assistant"
+}
+```
+</CodeGroup>
+
+---
+
+### updateOrder
+
+Updates order fields.
+
+```typescript
+export const updateOrder = async (
+  orderUpdates: Partial<Order> & { id: string }
+): Promise<Order>
+```
+
+<ParamField path="orderUpdates" type="object" required>
+  Partial order object with required `id` field
+</ParamField>
+
+<ResponseField name="order" type="Order">
+  The updated order
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { updateOrder } from './services/orderService';
+
+const updated = await updateOrder({
+  id: "ORD-1709876543210-abc12",
+  customer: {
+    ...existingOrder.customer,
+    address: "Nueva dirección 456"
+  }
+});
+```
+</CodeGroup>
+
+---
+
+### updateOrderStatus
+
+Updates order status with validation and notifications.
+
+```typescript
+export const updateOrderStatus = async (
+  orderId: string,
+  status: OrderStatus
+): Promise<Order>
+```
+
+<ParamField path="orderId" type="string" required>
+  The order ID
+</ParamField>
+
+<ParamField path="status" type="OrderStatus" required>
+  New status (see OrderStatus enum below)
+</ParamField>
+
+<ResponseField name="order" type="Order">
+  Updated order with new status added to history
+</ResponseField>
+
+**Validation Rules:**
+- Cannot update orders that are already finished
+- Cannot complete orders that are not paid (throws error)
+- Automatically sets `isPaid: true` and `finishedAt` timestamp for completed orders
+- Sends notification on status change
+
+<CodeGroup>
+```typescript Usage
+import { updateOrderStatus, OrderStatus } from './services/orderService';
+
+try {
+  const order = await updateOrderStatus(
+    "ORD-1709876543210-abc12",
+    OrderStatus.CONFIRMED
+  );
+  console.log('Order confirmed:', order.id);
+} catch (error) {
+  console.error('Status update failed:', error.message);
+}
+```
+</CodeGroup>
+
+**Error Cases:**
+```typescript
+// Throws: "No se puede completar un pedido cuyo pago no ha sido aprobado..."
+await updateOrderStatus(unpaidOrderId, OrderStatus.COMPLETED_DELIVERY);
+```
+
+---
+
+### markOrderAsPaid
+
+Marks an order as paid with payment method and optional proof.
+
+```typescript
+export const markOrderAsPaid = async (
+  orderId: string,
+  paymentMethod: PaymentMethod,
+  paymentProofUrl?: string | null
+): Promise<Order>
+```
+
+<ParamField path="orderId" type="string" required>
+  The order ID
+</ParamField>
+
+<ParamField path="paymentMethod" type="PaymentMethod" required>
+  Payment method used
+</ParamField>
+
+<ParamField path="paymentProofUrl" type="string | null">
+  URL to payment proof image (optional)
+</ParamField>
+
+<ResponseField name="order" type="Order">
+  Updated order with payment information
+</ResponseField>
+
+**Special Behavior:**
+- For dine-in orders with status `DINE_IN_PENDING_PAYMENT`, automatically transitions to `COMPLETED_DINE_IN`
+- Sends payment approval notification
+
+<CodeGroup>
+```typescript Usage
+import { markOrderAsPaid, PaymentMethod } from './services/orderService';
+
+const order = await markOrderAsPaid(
+  "ORD-1709876543210-abc12",
+  PaymentMethod.TRANSFER,
+  "https://storage.example.com/payment-proof.jpg"
+);
+
+console.log('Payment approved:', order.isPaid);
+```
+</CodeGroup>
+
+---
+
+### deleteOrder
+
+Deletes an order by ID.
+
+```typescript
+export const deleteOrder = async (orderId: string): Promise<void>
+```
+
+<ParamField path="orderId" type="string" required>
+  The order ID to delete
+</ParamField>
+
+---
+
+### isOrderFinished
+
+Checks if an order has a finished status.
+
+```typescript
+export const isOrderFinished = (status: OrderStatus): boolean
+```
+
+<ParamField path="status" type="OrderStatus" required>
+  Order status to check
+</ParamField>
+
+<ResponseField name="isFinished" type="boolean">
+  Returns `true` if status is one of: `COMPLETED_PICKUP`, `COMPLETED_DELIVERY`, `COMPLETED_DINE_IN`, or `CANCELLED`
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { isOrderFinished, OrderStatus } from './services/orderService';
+
+if (isOrderFinished(order.status)) {
+  console.log('Order is complete');
+}
+```
+</CodeGroup>
+
+---
+
+## TypeScript Types
+
+### OrderStatus Enum
+
+```typescript
+enum OrderStatus {
+  PENDING = 'Pendiente',
+  CONFIRMED = 'Confirmado',
+  PREPARING = 'En Preparación',
+  READY = 'Listo para Retirar/Entregar',
+  DELIVERING = 'En Camino',
+  DINE_IN_PENDING_PAYMENT = 'En Mesa (Pendiente de Pago)',
+  COMPLETED_PICKUP = 'Completado (Retirado)',
+  COMPLETED_DELIVERY = 'Completado (Entregado)',
+  COMPLETED_DINE_IN = 'Completado (En Mesa)',
+  CANCELLED = 'Cancelado'
+}
+```
+
+### OrderType Enum
+
+```typescript
+enum OrderType {
+  PICKUP = 'pickup',
+  DELIVERY = 'delivery',
+  DINE_IN = 'dine-in'
+}
+```
+
+### PaymentMethod Enum
+
+```typescript
+enum PaymentMethod {
+  CASH = 'Efectivo',
+  CREDIT = 'Credito',
+  TRANSFER = 'Transferencia'
+}
+```
+
+### CreatedBy Enum
+
+```typescript
+enum CreatedBy {
+  ADMIN = 'Admin Panel',
+  WEB_ASSISTANT = 'Web Assistant',
+  WHATSAPP_ASSISTANT = 'WhatsApp Assistant'
+}
+```
+
+### Order Interface
+
+```typescript
+interface Order {
+  id: string;
+  customer: {
+    name: string;
+    phone?: string;
+    address?: string;
+  };
+  items: OrderItem[];
+  total: number;
+  status: OrderStatus;
+  type: OrderType;
+  createdAt: string;
+  statusHistory: StatusHistory[];
+  finishedAt: string | null;
+  tableIds?: string[];
+  guests?: number;
+  paymentMethod: PaymentMethod;
+  isPaid: boolean;
+  paymentProofUrl?: string | null;
+  reservationId?: string;
+  createdBy: CreatedBy;
+}
+```
+
+### OrderItem Interface
+
+```typescript
+interface OrderItem {
+  name: string;
+  quantity: number;
+  price: number;
+  isPromotion: boolean;
+  itemId: string;
+}
+```
+
+### StatusHistory Interface
+
+```typescript
+interface StatusHistory {
+  status: OrderStatus | ReservationStatus;
+  startedAt: string; // ISO timestamp
+}
+```
+
+---
+
+## Status Workflow
+
+### Pickup Orders
+
+1. `PENDING` → Order created
+2. `CONFIRMED` → Order accepted
+3. `PREPARING` → Kitchen preparing
+4. `READY` → Ready for pickup
+5. `COMPLETED_PICKUP` → Customer picked up
+
+### Delivery Orders
+
+1. `PENDING` → Order created
+2. `CONFIRMED` → Order accepted
+3. `PREPARING` → Kitchen preparing
+4. `READY` → Ready for delivery
+5. `DELIVERING` → Out for delivery
+6. `COMPLETED_DELIVERY` → Delivered
+
+### Dine-In Orders
+
+1. `PENDING` → Order created
+2. `CONFIRMED` → Order accepted
+3. `PREPARING` → Kitchen preparing
+4. `READY` → Food ready
+5. `DINE_IN_PENDING_PAYMENT` → Waiting for payment
+6. `COMPLETED_DINE_IN` → Payment received
+
+<Warning>
+  Orders must be marked as paid before transitioning to any `COMPLETED_*` status.
+</Warning>

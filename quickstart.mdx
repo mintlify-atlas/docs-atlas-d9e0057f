@@ -1,80 +1,368 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get Ai Studio running locally in under 10 minutes
 ---
 
-## Get started in three steps
+## Get Up and Running Fast
 
-Get your documentation site running locally and make your first customization.
+This quickstart guide will have you running Ai Studio locally in under 10 minutes. For a comprehensive production setup, see the [Installation Guide](/installation).
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Before you begin, make sure you have:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Node.js 18+" icon="node-js">
+    Download from [nodejs.org](https://nodejs.org/)
+  </Card>
+  <Card title="Firebase Account" icon="database">
+    Sign up at [firebase.google.com](https://firebase.google.com/)
+  </Card>
+  <Card title="Gemini API Key" icon="key">
+    Get your key at [aistudio.google.com](https://aistudio.google.com/)
+  </Card>
+  <Card title="Git" icon="git-alt">
+    Install from [git-scm.com](https://git-scm.com/)
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **New to these services?** The free tiers are perfect for getting started and testing Ai Studio.
 </Note>
+
+## Setup Steps
+
+<Steps>
+  <Step title="Clone and Install">
+    Clone the repository and install dependencies:
+
+    ```bash
+    git clone <your-ai-studio-repo-url>
+    cd ai-studio
+    npm install
+    ```
+
+    This will install all required packages including React, Firebase, and the Google Gemini SDK.
+  </Step>
+
+  <Step title="Create Firebase Project">
+    Set up your Firebase project:
+
+    1. Go to the [Firebase Console](https://console.firebase.google.com/)
+    2. Click **Create a project**
+    3. Enter your project name (e.g., "ai-studio-dev")
+    4. Enable Google Analytics (optional)
+    5. Click **Create project**
+
+    Once created, you'll need to get your Firebase configuration.
+  </Step>
+
+  <Step title="Get Firebase Configuration">
+    From your Firebase project:
+
+    1. Click the **gear icon** → **Project settings**
+    2. Scroll to **Your apps** section
+    3. Click **Web** app icon (`</>`)
+    4. Register your app with a nickname
+    5. Copy the `firebaseConfig` object
+
+    You'll need these values:
+    - `apiKey`
+    - `authDomain`
+    - `projectId`
+    - `storageBucket`
+    - `messagingSenderId`
+    - `appId`
+    - `measurementId`
+  </Step>
+
+  <Step title="Enable Firestore Database">
+    Enable Firestore for data storage:
+
+    1. In Firebase Console, go to **Build** → **Firestore Database**
+    2. Click **Create database**
+    3. Choose **Start in test mode** (for development)
+    4. Select your region
+    5. Click **Enable**
+
+    <Warning>
+      Test mode allows unrestricted access. Switch to production rules before deploying!
+    </Warning>
+  </Step>
+
+  <Step title="Get Gemini API Key">
+    Obtain your Google Gemini API key:
+
+    1. Visit [Google AI Studio](https://aistudio.google.com/)
+    2. Sign in with your Google account
+    3. Click **Get API key**
+    4. Create a new API key or use an existing one
+    5. Copy the key
+
+    <Note>
+      The free tier includes 15 requests per minute, perfect for development.
+    </Note>
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Create your environment configuration:
+
+    ```bash
+    cp .env.example .env.local
+    ```
+
+    Open `.env.local` and fill in your credentials:
+
+    ```bash .env.local
+    # Gemini AI Configuration
+    GEMINI_API_KEY=your_gemini_api_key_here
+
+    # Firebase Configuration
+    VITE_FIREBASE_API_KEY=your_firebase_api_key
+    VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+    VITE_FIREBASE_PROJECT_ID=your-project-id
+    VITE_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+    VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+    VITE_FIREBASE_APP_ID=your_app_id
+    VITE_FIREBASE_MEASUREMENT_ID=G-XXXXXXXXXX
+
+    # Optional: App URL for QR code generation
+    VITE_APP_URL=http://localhost:3000
+    ```
+
+    <Accordion title="Where do I find each value?">
+      - **GEMINI_API_KEY**: From Google AI Studio (Step 5)
+      - **VITE_FIREBASE_\***: From Firebase Project Settings (Step 3)
+      - **VITE_APP_URL**: Your app's URL (use localhost for development)
+    </Accordion>
+  </Step>
+
+  <Step title="Start Development Server">
+    Launch the application:
+
+    ```bash
+    npm run dev
+    ```
+
+    The app will start at `http://localhost:3000`
+
+    <Note>
+      The development server includes hot module replacement (HMR) for instant updates.
+    </Note>
+  </Step>
+</Steps>
+
+## Verify Your Setup
+
+Once the server is running, verify everything works:
+
+### 1. Access the Application
+
+Open your browser and navigate to `http://localhost:3000`
+
+You should see the Ai Studio interface with the main dashboard.
+
+### 2. Test the AI Assistant
+
+<Steps>
+  <Step title="Open Chat">
+    Click the chat icon to open the "Slice" AI assistant
+  </Step>
+  <Step title="Ask a Question">
+    Try: "What's on the menu today?"
+    
+    The AI should respond with menu information
+  </Step>
+  <Step title="Test Order Flow">
+    Say: "I'd like to order a pizza for pickup"
+    
+    Follow the conversation to complete a test order
+  </Step>
+</Steps>
+
+### 3. Test Order Management
+
+Try creating a test order:
+
+<CodeGroup>
+
+```text Test Conversation
+You: I'd like to order for pickup
+Slice: Great! What would you like to order?
+You: One Muzzarella pizza
+Slice: Perfect! One Muzzarella pizza. Can I have your name and phone number?
+You: John Doe, 555-1234
+Slice: Will you pay with cash or credit?
+You: Cash
+Slice: Your order: 1 Pizza Muzzarella. Pay with Cash. Total: $9200. Confirm?
+You: Yes, confirm
+```
+
+</CodeGroup>
+
+The order should appear in the admin dashboard with status **Pending**.
+
+### 4. Test Reservation System
+
+Try making a reservation:
+
+<Steps>
+  <Step title="Start Reservation">
+    In chat, say: "I'd like to make a reservation"
+  </Step>
+  <Step title="Provide Details">
+    Follow the prompts:
+    - Number of guests: 4
+    - Date: Tomorrow
+    - Time: 7:00 PM
+    - Name and phone number
+  </Step>
+  <Step title="Confirm">
+    The AI will summarize and ask for confirmation
+  </Step>
+  <Step title="Check Dashboard">
+    The reservation appears in the admin interface
+  </Step>
+</Steps>
+
+## Common Issues
+
+<Accordion title="Gemini API Key Error">
+  **Error**: `API_KEY not found` or `Failed to get response from assistant`
+
+  **Solution**:
+  1. Verify `GEMINI_API_KEY` is set in `.env.local`
+  2. Restart the dev server: `npm run dev`
+  3. Check the key is valid in [Google AI Studio](https://aistudio.google.com/)
+</Accordion>
+
+<Accordion title="Firebase Connection Failed">
+  **Error**: `Firebase: Error (auth/invalid-api-key)`
+
+  **Solution**:
+  1. Double-check all `VITE_FIREBASE_*` values in `.env.local`
+  2. Ensure Firestore is enabled in Firebase Console
+  3. Verify your Firebase project is active
+</Accordion>
+
+<Accordion title="Port Already in Use">
+  **Error**: `Port 3000 is already in use`
+
+  **Solution**:
+  ```bash
+  # Use a different port
+  PORT=3001 npm run dev
+  ```
+
+  Or kill the process using port 3000:
+  ```bash
+  # On macOS/Linux
+  lsof -ti:3000 | xargs kill -9
+
+  # On Windows
+  netstat -ano | findstr :3000
+  taskkill /PID <PID> /F
+  ```
+</Accordion>
+
+<Accordion title="Module Not Found Errors">
+  **Error**: `Cannot find module 'X'`
+
+  **Solution**:
+  ```bash
+  # Clear cache and reinstall
+  rm -rf node_modules package-lock.json
+  npm install
+  ```
+</Accordion>
+
+<Accordion title="Vite Build Errors">
+  **Error**: TypeScript or build errors
+
+  **Solution**:
+  1. Ensure TypeScript version is `~5.8.2`
+  2. Clear Vite cache: `rm -rf node_modules/.vite`
+  3. Restart dev server
+</Accordion>
+
+## Next Steps
+
+Now that you have Ai Studio running locally, explore these areas:
+
+<CardGroup cols={2}>
+  <Card title="Configure Your Menu" icon="utensils" href="/features/menu-management">
+    Add your restaurant's products, categories, and pricing
+  </Card>
+  <Card title="Set Up Tables" icon="chair" href="/features/tables">
+    Configure your seating layout and reservation rules
+  </Card>
+  <Card title="Customize Schedule" icon="clock" href="/configuration/schedule">
+    Define your business hours and special schedules
+  </Card>
+  <Card title="Test Order Flows" icon="shopping-cart" href="/features/orders">
+    Understand the complete order lifecycle
+  </Card>
+  <Card title="Explore AI Assistant" icon="robot" href="/features/ai-assistants">
+    Customize the Slice assistant's behavior
+  </Card>
+  <Card title="Deploy to Production" icon="rocket" href="/installation">
+    Follow the complete installation guide for deployment
+  </Card>
+</CardGroup>
+
+## Development Tips
+
+<Note>
+  **Hot Reload**: Changes to React components reload automatically. Changes to `.env.local` require a server restart.
+</Note>
+
+### Useful Commands
+
+```bash
+# Start development server
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
+
+# Type checking
+npx tsc --noEmit
+
+# Format code
+npx prettier --write .
+```
+
+### Project Structure
+
+```
+ai-studio/
+├── components/        # React components
+├── services/          # Firebase & Gemini services
+│   ├── firebase.ts    # Firestore configuration
+│   ├── geminiService.ts # AI chat logic
+│   └── ...
+├── types.ts           # TypeScript definitions
+├── App.tsx            # Main application
+├── vite.config.ts     # Vite configuration
+└── .env.local         # Your environment variables
+```
+
+## Need Help?
+
+<CardGroup cols={2}>
+  <Card title="Full Documentation" icon="book" href="/introduction">
+    Learn about all features and capabilities
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the service layer and data models
+  </Card>
+  <Card title="Report Issues" icon="github" href="https://github.com/sanfosxdev/LosGeniosApp_Prod_10_03_26/issues">
+    Found a bug? Let us know!
+  </Card>
+  <Card title="Contributing" icon="users" href="https://github.com/sanfosxdev/LosGeniosApp_Prod_10_03_26">
+    Help improve Ai Studio
+  </Card>
+</CardGroup>

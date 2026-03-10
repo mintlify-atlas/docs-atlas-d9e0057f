@@ -1,0 +1,801 @@
+---
+title: 'AI Assistants'
+description: 'Slice web chat and WhatsApp bot powered by Gemini AI for automated order and reservation handling'
+icon: 'robot'
+---
+
+## Overview
+
+Ai Studio includes two AI-powered assistants that handle customer orders and reservations automatically: **Slice** (web chat) and the **WhatsApp Bot**. Both use Google's Gemini AI with custom prompts that include real-time menu data, availability, and business rules.
+
+### Key Benefits
+
+- **24/7 Automated Service**: Accept orders and reservations even when closed
+- **Multi-Channel Support**: Web interface and WhatsApp for customer convenience
+- **Context-Aware**: AI knows menu, prices, availability, and business hours
+- **Intelligent Conversation**: Natural language processing for Spanish interactions
+- **Order Validation**: Enforces payment rules, availability checks, and time restrictions
+- **Metrics Tracking**: Monitor conversations, token usage, and conversion rates
+
+## Architecture
+
+Both assistants share core AI logic but differ in interface:
+
+<Tabs>
+  <Tab title="Slice (Web Chat)">
+    **Interface**: Modal overlay on web interface  
+    **Technology**: React component + Gemini API  
+    **Features**:
+    - Voice input (transcription via Gemini)
+    - Audio file drag-and-drop
+    - Markdown rendering for bot responses
+    - Session persistence across page refreshes
+    
+    **Files**:
+    - `components/ChatAssistantModal.tsx`
+    - `services/geminiService.ts`
+    - `services/sliceBotMetricsService.ts`
+  </Tab>
+  
+  <Tab title="WhatsApp Bot">
+    **Interface**: WhatsApp Business API  
+    **Technology**: BuilderBot Cloud + Gemini API  
+    **Features**:
+    - QR code authentication
+    - Persistent connection management
+    - Webhook-based message handling
+    - Bulk messaging capabilities
+    
+    **Files**:
+    - `services/whatsappBotService.ts`
+    - `components/admin/BotsPanel.tsx`
+  </Tab>
+</Tabs>
+
+## Slice Web Assistant
+
+### Data Structures
+
+From `types.ts:246-254`:
+
+```typescript
+export enum MessageSender {
+  USER = 'user',
+  BOT = 'bot',
+}
+
+export interface ChatMessage {
+  sender: MessageSender;
+  text: string;
+}
+```
+
+### Session Tracking
+
+From `types.ts:282-289`:
+
+```typescript
+export interface ChatHistorySession {
+  id: string;                          // Unique session ID
+  startTime: string;                   // ISO timestamp
+  messages: ChatMessage[];             // Full conversation
+  outcome: 'order' | 'reservation' | null;  // Final result
+  tokensUsed: number;                  // Gemini API token count
+  lastActivity: string;                // Last message timestamp
+}
+```
+
+### Metrics Tracking
+
+From `types.ts:267-274`:
+
+```typescript
+export interface SliceBotMetrics {
+  distinctCustomers: number;    // Unique users
+  totalMessages: number;        // All messages sent/received
+  totalTokensUsed: number;      // Gemini API usage
+  ordersMade: number;           // Successful orders
+  reservationsMade: number;     // Successful reservations
+}
+```
+
+### Core Functions
+
+From `services/geminiService.ts`:
+
+```typescript
+sendMessageToGemini(
+  history: ChatMessage[],
+  actionLock: 'order' | 'reservation' | null
+): Promise<{ text: string }>
+```
+
+**How It Works** (from `geminiService.ts:352-377`):
+
+<Steps>
+  <Step title="Filter History">
+    Removes any previous JSON responses from history (internal system communication).
+  </Step>
+  
+  <Step title="Build System Instruction">
+    Generates comprehensive prompt including:
+    - Current menu with prices and descriptions
+    - Business hours and schedule
+    - Reservation settings and availability
+    - Real-time table occupancy
+    - Payment rules
+    - Conversation guidelines
+  </Step>
+  
+  <Step title="Call Gemini API">
+    Sends conversation to `gemini-2.5-flash` model with system instruction.
+  </Step>
+  
+  <Step title="Return Response">
+    Bot's response (either conversational text or JSON for orders/reservations).
+  </Step>
+</Steps>
+
+**Example API Call**:
+
+```typescript
+const response = await ai.models.generateContent({
+  model: 'gemini-2.5-flash',
+  contents: formattedHistory,
+  config: {
+    systemInstruction: systemInstruction,  // Contains menu, hours, rules
+  },
+});
+
+return { text: response.text };
+```
+
+### Voice Input
+
+From `services/geminiService.ts:380-402`:
+
+```typescript
+transcribeAudio(
+  base64Audio: string,
+  mimeType: string
+): Promise<string>
+```
+
+**Usage**:
+
+```typescript
+import { transcribeAudio } from './services/geminiService';
+
+// User records voice message
+const audioBlob = /* ... microphone recording ... */;
+const base64Audio = await blobToBase64(audioBlob);
+
+const transcription = await transcribeAudio(base64Audio, 'audio/webm');
+console.log(transcription);  // "Quiero pedir una pizza muzzarella"
+
+// Then send as text message to AI
+await sendMessageToGemini([...history, { sender: 'user', text: transcription }]);
+```
+
+### Action Lock Mechanism
+
+From `components/ChatAssistantModal.tsx:28-29, 175-187`:
+
+```typescript
+const [actionLock, setActionLock] = useState<'order' | 'reservation' | null>(null);
+
+// First user message determines intent
+const userText = text.toLowerCase();
+if (userText.includes('pedido') || userText.includes('ordenar') || userText.includes('pizza')) {
+  currentActionLock = 'order';
+} else if (userText.includes('reserva') || userText.includes('mesa')) {
+  currentActionLock = 'reservation';
+}
+
+if (currentActionLock) {
+  setActionLock(currentActionLock);
+}
+```
+
+**Purpose**: Once conversation intent is determined, AI focuses exclusively on completing that task (order OR reservation, not both).
+
+### Order/Reservation Processing
+
+From `components/ChatAssistantModal.tsx:198-254`:
+
+When AI returns JSON:
+
+**Order JSON**:
+```json
+{
+  "intent": "ORDER",
+  "customer": {
+    "name": "Juan Pérez",
+    "phone": "1123456789",
+    "address": "Calle 123"
+  },
+  "items": [
+    { "name": "Pizza Muzzarella", "quantity": 2, "price": 9200 }
+  ],
+  "total": 18400,
+  "type": "delivery",
+  "paymentMethod": "Transferencia"
+}
+```
+
+**System Response**:
+
+```typescript
+if (data.intent === 'ORDER') {
+  await saveOrder({ ...data, createdBy: CreatedBy.WEB_ASSISTANT });
+  
+  // Log metrics
+  if (sessionId) sliceBotMetricsService.logOutcome(sessionId, 'order');
+  
+  // Show confirmation
+  handleActionSuccess(
+    `¡Perfecto! Tu pedido ha sido registrado con éxito. ¡Gracias!`
+  );
+}
+```
+
+**Reservation JSON**:
+```json
+{
+  "intent": "RESERVATION",
+  "customerName": "María González",
+  "customerPhone": "1198765432",
+  "guests": 4,
+  "date": "2026-03-15",
+  "time": "20:00"
+}
+```
+
+**System Response**:
+
+```typescript
+if (data.intent === 'RESERVATION') {
+  const reservationTime = new Date(`${data.date}T${data.time}`);
+  
+  // Final availability check
+  const availableTableIds = findAvailableTables(reservationTime, data.guests);
+  
+  if (availableTableIds) {
+    await addReservation({
+      ...data,
+      reservationTime: reservationTime.toISOString(),
+      tableIds: availableTableIds,
+      createdBy: CreatedBy.WEB_ASSISTANT,
+    });
+    
+    // Log and confirm
+    sliceBotMetricsService.logOutcome(sessionId, 'reservation');
+    handleActionSuccess(`¡Reserva confirmada para ${data.guests} personas!`);
+  } else {
+    // Offer alternatives
+    const alternativeSlots = getAvailability(date, data.guests);
+    // Show alternative times to customer
+  }
+}
+```
+
+### System Prompts
+
+From `services/geminiService.ts:144-349`:
+
+The AI receives different instructions based on business status and conversation state:
+
+#### Open for Business (Full Service)
+
+```typescript
+if (isOpen) {
+  return `Eres "Slice", un asistente de IA amigable para "Pizzería Los Genios".
+  
+  Tu objetivo es ayudar con:
+  1) Realizar pedidos para recoger o a domicilio
+  2) Hacer reservas de mesa
+  
+  **REGLAS DE PAGO OBLIGATORIAS**:
+  - Delivery: Solo "Transferencia"
+  - Pickup: "Efectivo" o "Credito" (preguntar)
+  
+  **PROCESO OBLIGATORIO**:
+  1. Recopila información completa
+  2. Presenta resumen y PREGUNTA si es correcto
+  3. Espera confirmación explícita ("sí", "confirmo")
+  4. SOLO DESPUÉS genera el JSON
+  
+  Menú:
+  ${menu}
+  
+  Horario:
+  ${schedule}
+  `;
+}
+```
+
+#### Closed for Orders (Reservations Only)
+
+```typescript
+else {
+  return `Eres "Slice", asistente de "Pizzería Los Genios".
+  
+  El local está CERRADO para pedidos.
+  
+  **INSTRUCCIONES**:
+  1. Informa que el local está cerrado para tomar pedidos
+  2. Muestra el horario: ${schedule}
+  3. Aclara que SÍ pueden hacer una reserva
+  
+  Si el usuario no quiere reservar, finaliza amablemente.
+  `;
+}
+```
+
+#### Action-Locked (Order or Reservation in Progress)
+
+```typescript
+if (actionLock === 'order') {
+  return `Ya estás en medio de tomar un pedido.
+  
+  Tu ÚNICA tarea es completar este pedido:
+  - NO ofrezcas hacer una reserva
+  - Pide la información faltante
+  - Presenta resumen y espera confirmación
+  - Genera JSON de PEDIDO
+  `;
+}
+
+if (actionLock === 'reservation') {
+  return `Ya estás en medio de hacer una reserva.
+  
+  Tu ÚNICA tarea es completar esta reserva:
+  - NO ofrezcas tomar un pedido
+  - Pide datos faltantes (nombre, teléfono, personas, fecha, hora)
+  - Presenta resumen y espera confirmación
+  - Genera JSON de RESERVA
+  `;
+}
+```
+
+### Real-Time Data Integration
+
+From `services/geminiService.ts:13-142`:
+
+AI has access to live data:
+
+#### Current Menu
+
+```typescript
+const generateMenuForPrompt = (): string => {
+  const products = getProductsFromCache();
+  return JSON.stringify(groupedMenu, null, 2);
+};
+```
+
+When you update a product in admin panel, AI immediately knows the new price/details.
+
+#### Business Hours
+
+```typescript
+const formatScheduleForPrompt = (): string => {
+  const schedule = getScheduleFromCache();
+  return days.map((day, index) => {
+    const daySchedule = schedule[dayKeys[index]];
+    if (daySchedule.isOpen) {
+      return `${dayName}: de ${slot.open} a ${slot.close}`;
+    }
+    return `${dayName}: Cerrado`;
+  }).join('\n');
+};
+```
+
+#### Table Availability
+
+```typescript
+const generateAvailabilityForPrompt = (): string => {
+  const reservations = getReservationsFromCache().filter(
+    r => r.status === ReservationStatus.CONFIRMED
+  );
+  const orders = getOrdersFromCache().filter(
+    o => o.type === OrderType.DINE_IN && !isOrderFinished(o.status)
+  );
+  
+  // Build list of busy time slots with table names
+  return formattedSlots;  // "Hoy 20:00-21:30 en Mesa 1, Mesa 2"
+};
+```
+
+AI uses this to **proactively suggest alternative times** when requested slot is unavailable.
+
+## WhatsApp Bot
+
+### Connection Management
+
+From `services/whatsappBotService.ts`:
+
+#### Bot Status Types
+
+```typescript
+export type BotApiStatus = 'READY_TO_SCAN' | 'ACTIVE' | 'DISCONNECTED';
+
+export type WhatsAppBotStatus = 
+  'disconnected' | 'initiating' | 'ready_to_scan' | 
+  'scanning' | 'active' | 'error' | 'disconnecting';
+```
+
+#### Core Functions
+
+```typescript
+// Start bot deployment
+initiateWhatsAppDeploy(): Promise<boolean>
+
+// Get QR code for scanning
+getWhatsAppQR(): Promise<string>  // Returns base64 image
+
+// Check connection status
+getWhatsAppStatus(): Promise<BotApiStatus>
+
+// Disconnect bot
+disconnectWhatsAppBot(): Promise<boolean>
+```
+
+### Connecting the Bot
+
+From `components/admin/BotsPanel.tsx`:
+
+<Steps>
+  <Step title="Navigate to Bots Panel">
+    Admin clicks "Bots" in sidebar.
+  </Step>
+  
+  <Step title="Initiate Deployment">
+    Click "Conectar WhatsApp Bot". System:
+    - Calls BuilderBot API to deploy
+    - Sets status to `initiating`
+  </Step>
+  
+  <Step title="Wait for QR Code">
+    Status changes to `ready_to_scan`. System:
+    - Polls for QR code image
+    - Displays QR in admin panel
+  </Step>
+  
+  <Step title="Scan with WhatsApp">
+    Admin scans QR with WhatsApp on phone. Status: `scanning`
+  </Step>
+  
+  <Step title="Bot Activated">
+    WhatsApp authenticates. Status: `active`.
+    
+    Bot now responds to customer messages automatically.
+  </Step>
+</Steps>
+
+### Sending Messages
+
+From `services/whatsappBotService.ts:133-182`:
+
+```typescript
+sendWhatsAppMessage(
+  number: string,
+  content: string,
+  mediaUrl?: string
+): Promise<{ success: boolean; error?: string }>
+```
+
+**Example**:
+
+```typescript
+import { sendWhatsAppMessage } from './services/whatsappBotService';
+
+const result = await sendWhatsAppMessage(
+  '1145678901',
+  '¡Hola! Tu pedido está listo para retirar.',
+  'https://example.com/order-ready.jpg'
+);
+
+if (result.success) {
+  console.log('Notification sent!');
+} else {
+  console.error(`Failed: ${result.error}`);
+}
+```
+
+### Bulk Messaging
+
+From `services/whatsappBotService.ts:184-232`:
+
+```typescript
+sendWhatsAppGroupMessage(
+  groupId: string,
+  content: string,
+  mediaUrl?: string
+): Promise<{ success: boolean; error?: string }>
+```
+
+Used for promotional broadcasts to customer segments.
+
+### Metrics Tracking
+
+From `types.ts:275-280`:
+
+```typescript
+export interface WhatsAppBotMetrics {
+  distinctCustomers: number;    // Unique phone numbers
+  totalMessages: number;        // All messages handled
+  ordersMade: number;           // Orders created via WhatsApp
+  reservationsMade: number;     // Reservations created via WhatsApp
+}
+```
+
+## Conversation Flows
+
+### Order Flow Example
+
+**Customer**: "Quiero pedir una pizza"
+
+**Slice**: "¡Perfecto! ¿Qué tipo de pizza te gustaría? Tenemos Muzzarella, Napolitana, 4 Quesos, y más."
+
+**Customer**: "Una muzzarella grande"
+
+**Slice**: "¿Para recoger en el local o te la enviamos a domicilio?"
+
+**Customer**: "A domicilio"
+
+**Slice**: "Perfecto. ¿Cuál es tu nombre?"
+
+**Customer**: "Juan Pérez"
+
+**Slice**: "¿Y tu dirección?"
+
+**Customer**: "Calle Falsa 123"
+
+**Slice**: "¿Teléfono de contacto?"
+
+**Customer**: "1123456789"
+
+**Slice**: "Genial. Para pedidos a domicilio, el pago es por transferencia. Te paso el resumen:
+
+- 1x Pizza Muzzarella: $9200
+- Total: $9200
+- Entrega en: Calle Falsa 123
+
+¿Todo correcto?"
+
+**Customer**: "Sí, confirmo"
+
+**Slice**: [Generates JSON, creates order]
+
+"¡Perfecto! Tu pedido ha sido registrado con éxito. Te enviaremos los datos para la transferencia. ¡Gracias por elegir Pizzería Los Genios!"
+
+### Reservation Flow Example
+
+**Customer**: "Quiero hacer una reserva"
+
+**Slice**: "¡Claro! ¿Para cuántas personas?"
+
+**Customer**: "4 personas"
+
+**Slice**: "¿Qué día te gustaría reservar?"
+
+**Customer**: "El viernes"
+
+**Slice**: "¿A qué hora?"
+
+**Customer**: "20:00"
+
+**Slice**: [Checks availability] "Perfecto, tenemos disponibilidad el viernes a las 20:00. ¿Cómo es tu nombre?"
+
+**Customer**: "María González"
+
+**Slice**: "¿Teléfono?"
+
+**Customer**: "1198765432"
+
+**Slice**: "Excelente. Aquí está el resumen de tu reserva:
+
+- Nombre: María González
+- Personas: 4
+- Fecha: Viernes 15 de Marzo
+- Hora: 20:00
+
+¿Confirmo la reserva?"
+
+**Customer**: "Sí"
+
+**Slice**: [Generates JSON, creates reservation]
+
+"¡Excelente! Tu reserva para 4 personas el viernes a las 20:00 ha sido confirmada. ¡Te esperamos!"
+
+### Handling Unavailable Time
+
+**Customer**: "Quiero reservar para 4 personas mañana a las 21:00"
+
+**Slice**: [Checks availability] "Un momento, déjame verificar... Parece que las 21:00 ya no está disponible. ¿Te parecería bien a las 20:30 o a las 21:30?"
+
+**Customer**: "20:30 está bien"
+
+**Slice**: "Perfecto, entonces confirmamos para mañana a las 20:30..."
+
+## Metrics & Analytics
+
+From `services/sliceBotMetricsService.ts`:
+
+### Session Management
+
+```typescript
+// Start new conversation
+startSession(): string  // Returns session ID
+
+// Log each message
+logMessage(sessionId: string, message: ChatMessage): void
+
+// Record final outcome
+logOutcome(sessionId: string, outcome: 'order' | 'reservation'): void
+
+// Get session history
+getSessionHistory(sessionId: string): ChatHistorySession | null
+```
+
+### Metrics Calculation
+
+From `services/sliceBotMetricsService.ts`:
+
+```typescript
+export const getMetrics = (): SliceBotMetrics => {
+  const sessions = getAllSessions();
+  
+  return {
+    distinctCustomers: sessions.length,  // Unique sessions
+    totalMessages: sessions.reduce((sum, s) => sum + s.messages.length, 0),
+    totalTokensUsed: sessions.reduce((sum, s) => sum + s.tokensUsed, 0),
+    ordersMade: sessions.filter(s => s.outcome === 'order').length,
+    reservationsMade: sessions.filter(s => s.outcome === 'reservation').length,
+  };
+};
+```
+
+**Displayed in Admin Panel**:
+- Total conversations
+- Messages sent/received
+- Gemini API token usage (for cost tracking)
+- Conversion rates (orders/reservations per conversation)
+
+## Configuration
+
+### Gemini API Key
+
+From `services/geminiService.ts:11`:
+
+```typescript
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+```
+
+Set environment variable `API_KEY` to your Google AI Studio API key.
+
+### WhatsApp Bot Credentials
+
+From `services/whatsappBotService.ts:3-5`:
+
+```typescript
+const projectId = 'e40701d9-d93a-451f-9d5b-5cb02c237add';
+const builderBotApiKey = 'bbc-ff129879-89ee-43a5-a28b-640480e3294a';
+const builderBotV2ApiKey = 'bb-e25d1057-de9a-4cc0-b103-4bcbc2873820';
+```
+
+<Warning>
+These are BuilderBot Cloud credentials. Replace with your own project credentials before deployment.
+</Warning>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Monitor Token Usage" icon="chart-line">
+    Gemini API charges per token. Check metrics regularly to estimate costs.
+  </Card>
+  
+  <Card title="Keep Menu Updated" icon="utensils">
+    AI reads menu from cache. When you update products, AI immediately knows - no restart needed.
+  </Card>
+  
+  <Card title="Test Conversation Flows" icon="comments">
+    Regularly test both happy paths and edge cases (unavailable items, past dates, etc.).
+  </Card>
+  
+  <Card title="WhatsApp Connection Monitoring" icon="wifi">
+    WhatsApp bot can disconnect unexpectedly. Set up monitoring and re-connect promptly.
+  </Card>
+  
+  <Card title="Review Failed Orders/Reservations" icon="exclamation-triangle">
+    Check logs when AI fails to create order/reservation. Usually due to validation or availability.
+  </Card>
+  
+  <Card title="Customize Prompts for Your Brand" icon="palette">
+    Edit system instructions in `geminiService.ts` to match your restaurant's tone and policies.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<Accordion title="AI Creates Order But It Doesn't Appear in Admin">
+  **Possible Causes**:
+  - Firebase write failed (check network/permissions)
+  - Order validation failed (check console for errors)
+  
+  **Solution**:
+  - Check browser console for error messages
+  - Verify Firebase security rules allow writes
+  - Test with manual order creation in admin panel
+</Accordion>
+
+<Accordion title="WhatsApp Bot Shows 'Error' Status">
+  **Possible Causes**:
+  - BuilderBot API credentials invalid
+  - Network connectivity issue
+  - WhatsApp phone disconnected
+  
+  **Solution**:
+  - Disconnect and reconnect bot
+  - Verify API keys in `whatsappBotService.ts`
+  - Check BuilderBot dashboard for status
+</Accordion>
+
+<Accordion title="AI Suggests Unavailable Reservation Time">
+  **Possible Causes**:
+  - Real-time availability data not loading
+  - Race condition (table booked between AI suggestion and submission)
+  
+  **Solution**:
+  - System performs final availability check before creating reservation
+  - If unavailable, AI offers alternatives automatically
+  - This is expected behavior for concurrent bookings
+</Accordion>
+
+<Accordion title="Voice Input Not Working">
+  **Possible Causes**:
+  - Microphone permissions denied
+  - Browser doesn't support MediaRecorder API
+  - Network issue during transcription
+  
+  **Solution**:
+  - Check browser permissions for microphone
+  - Use Chrome/Edge (best support)
+  - Verify Gemini API key is valid
+</Accordion>
+
+## Related Features
+
+- [Orders](/features/orders) - AI creates orders with `createdBy: WEB_ASSISTANT/WHATSAPP_ASSISTANT`
+- [Reservations](/features/reservations) - AI books tables using availability checking
+- [Menu Management](/features/menu-management) - AI reads menu in real-time
+- [Customers](/features/customers) - Bulk WhatsApp messaging to customer segments
+
+## API Reference
+
+### Gemini Integration
+
+**Model**: `gemini-2.5-flash`  
+**Provider**: Google AI Studio  
+**Use Cases**:
+- Conversational AI for orders/reservations
+- Audio transcription
+- JSON structured output
+
+**Pricing Considerations**:
+- Charged per input/output token
+- System instructions count toward token usage
+- Monitor via `SliceBotMetrics.totalTokensUsed`
+
+### BuilderBot Integration
+
+**API**: BuilderBot Cloud REST API  
+**Version**: v1 (deploy), v2 (messages)  
+**Endpoints**:
+- `POST /api/v1/manager/deploys` - Start bot
+- `GET /api/v1/manager/deploys/{id}/qr` - Get QR code
+- `GET /api/v1/manager/deploys/{id}` - Check status
+- `DELETE /api/v1/manager/deploys/{id}` - Stop bot
+- `POST /api/v2/{projectId}/messages` - Send message
+
+**Authentication**: `x-api-builderbot` header with API key

@@ -1,0 +1,515 @@
+---
+title: Reservations API
+description: Table reservation management with intelligent availability checking
+icon: "calendar-check"
+---
+
+## Overview
+
+The Reservations API manages table reservations with real-time availability checking, capacity planning, and conflict detection. It integrates with the Tables and Orders APIs to ensure accurate table status.
+
+## Reservation Management
+
+### getReservationsFromCache
+
+Retrieves reservations from in-memory cache synchronously.
+
+```typescript
+export const getReservationsFromCache = (): Reservation[]
+```
+
+<ResponseField name="reservations" type="Reservation[]">
+  Array of reservations sorted by reservation time
+</ResponseField>
+
+---
+
+### fetchAndCacheReservations
+
+Fetches reservations from Firebase and updates caches.
+
+```typescript
+export const fetchAndCacheReservations = async (): Promise<Reservation[]>
+```
+
+---
+
+### addReservation
+
+Creates a new table reservation.
+
+```typescript
+export const addReservation = async (
+  reservationData: Omit<Reservation, 'id' | 'status' | 'createdAt' | 'statusHistory' | 'finishedAt'>
+): Promise<Reservation>
+```
+
+<ParamField path="reservationData" type="object" required>
+  <Expandable title="properties">
+    <ParamField path="customerName" type="string" required>
+      Customer name
+    </ParamField>
+    
+    <ParamField path="customerPhone" type="string">
+      Customer phone number
+    </ParamField>
+    
+    <ParamField path="guests" type="number" required>
+      Number of guests
+    </ParamField>
+    
+    <ParamField path="reservationTime" type="string" required>
+      ISO timestamp for reservation (e.g., "2024-03-08T20:00:00.000Z")
+    </ParamField>
+    
+    <ParamField path="tableIds" type="string[]" required>
+      Array of table IDs to reserve
+    </ParamField>
+    
+    <ParamField path="notes" type="string">
+      Special notes or requests
+    </ParamField>
+    
+    <ParamField path="orderId" type="string">
+      Associated order ID if order was placed
+    </ParamField>
+    
+    <ParamField path="createdBy" type="CreatedBy" required>
+      Reservation origin
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="reservation" type="Reservation">
+  Created reservation with:
+  - Generated ID (format: `RES-{timestamp}-{random}`)
+  - Initial status: `ReservationStatus.PENDING`
+  - Status history initialized
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { addReservation, CreatedBy } from './services/reservationService';
+
+const reservation = await addReservation({
+  customerName: "María González",
+  customerPhone: "+5491145678901",
+  guests: 4,
+  reservationTime: "2024-03-10T20:30:00.000Z",
+  tableIds: ["T1", "T2"],
+  notes: "Ventana si es posible",
+  createdBy: CreatedBy.WEB_ASSISTANT
+});
+
+console.log('Reservation created:', reservation.id);
+```
+
+```typescript Response
+{
+  id: "RES-1709876543210-xyz45",
+  customerName: "María González",
+  customerPhone: "+5491145678901",
+  guests: 4,
+  reservationTime: "2024-03-10T20:30:00.000Z",
+  tableIds: ["T1", "T2"],
+  status: "Pendiente",
+  createdAt: "2024-03-08T10:15:43.210Z",
+  statusHistory: [
+    { status: "Pendiente", startedAt: "2024-03-08T10:15:43.210Z" }
+  ],
+  finishedAt: null,
+  notes: "Ventana si es posible",
+  createdBy: "Web Assistant"
+}
+```
+</CodeGroup>
+
+---
+
+### updateReservation
+
+Updates an existing reservation.
+
+```typescript
+export const updateReservation = async (updatedReservation: Reservation): Promise<Reservation>
+```
+
+<ParamField path="updatedReservation" type="Reservation" required>
+  Complete reservation object with all fields
+</ParamField>
+
+---
+
+### updateReservationStatus
+
+Updates reservation status with optional cancellation reason.
+
+```typescript
+export const updateReservationStatus = async (
+  reservationId: string,
+  status: ReservationStatus,
+  cancellationReason?: ReservationCancellationReason
+): Promise<Reservation>
+```
+
+<ParamField path="reservationId" type="string" required>
+  The reservation ID
+</ParamField>
+
+<ParamField path="status" type="ReservationStatus" required>
+  New status
+</ParamField>
+
+<ParamField path="cancellationReason" type="ReservationCancellationReason">
+  Required when status is `CANCELLED`
+</ParamField>
+
+**Behavior:**
+- Cannot update finished reservations
+- Sets `finishedAt` timestamp for terminal statuses
+- Sends notification on status change
+- Adds status to history
+
+<CodeGroup>
+```typescript Usage
+import { 
+  updateReservationStatus, 
+  ReservationStatus,
+  ReservationCancellationReason 
+} from './services/reservationService';
+
+// Confirm reservation
+await updateReservationStatus(
+  "RES-1709876543210-xyz45",
+  ReservationStatus.CONFIRMED
+);
+
+// Cancel reservation
+await updateReservationStatus(
+  "RES-1709876543210-xyz45",
+  ReservationStatus.CANCELLED,
+  ReservationCancellationReason.USER
+);
+```
+</CodeGroup>
+
+---
+
+### deleteReservation
+
+Deletes a reservation by ID.
+
+```typescript
+export const deleteReservation = async (reservationId: string): Promise<void>
+```
+
+---
+
+## Availability & Capacity Planning
+
+### findAvailableTables
+
+Finds suitable tables for a reservation based on guest count and time.
+
+```typescript
+export const findAvailableTables = (
+  time: Date,
+  guests: number,
+  reservationToIgnoreId?: string
+): string[] | null
+```
+
+<ParamField path="time" type="Date" required>
+  Desired reservation time
+</ParamField>
+
+<ParamField path="guests" type="number" required>
+  Number of guests
+</ParamField>
+
+<ParamField path="reservationToIgnoreId" type="string">
+  Reservation ID to exclude from availability check (useful when updating existing reservation)
+</ParamField>
+
+<ResponseField name="tableIds" type="string[] | null">
+  - Array of table IDs that can accommodate the guests
+  - `null` if no suitable tables available
+  
+  **Selection Logic:**
+  1. Tries to find single table with sufficient capacity (prefers smallest fitting table)
+  2. If no single table fits, combines multiple tables
+  3. Returns `null` if capacity cannot be met
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { findAvailableTables } from './services/reservationService';
+
+const time = new Date('2024-03-10T20:30:00');
+const tableIds = findAvailableTables(time, 6);
+
+if (tableIds) {
+  console.log('Available tables:', tableIds);
+} else {
+  console.log('No availability for 6 guests at that time');
+}
+```
+
+```typescript Response Example
+["T4"] // Single 6-person table
+// or
+["T1", "T2"] // Two 4-person tables combined
+// or
+null // No availability
+```
+</CodeGroup>
+
+**Conflict Detection:**
+- Checks existing reservations for table conflicts
+- Checks active dine-in orders occupying tables
+- Uses reservation duration from settings
+- Filters out tables that don't allow reservations
+
+---
+
+### getAvailability
+
+Gets all available time slots for a date and party size.
+
+```typescript
+export const getAvailability = (date: Date, guests: number): string[]
+```
+
+<ParamField path="date" type="Date" required>
+  Target date for reservation
+</ParamField>
+
+<ParamField path="guests" type="number" required>
+  Number of guests
+</ParamField>
+
+<ResponseField name="timeSlots" type="string[]">
+  Array of available time slots in "HH:MM" format (e.g., ["19:00", "19:30", "20:00"])
+</ResponseField>
+
+**Algorithm:**
+1. Gets business hours schedule for the day
+2. Checks for schedule exceptions (holidays, special hours)
+3. Generates time slots based on `slotInterval` setting (default: 30 minutes)
+4. Filters out slots before minimum booking time
+5. Checks table availability for each slot
+6. Returns only slots where tables are available
+
+<CodeGroup>
+```typescript Usage
+import { getAvailability } from './services/reservationService';
+
+const date = new Date('2024-03-10');
+const slots = getAvailability(date, 4);
+
+console.log('Available slots:', slots);
+// ["19:00", "19:30", "20:00", "20:30", "21:00"]
+```
+</CodeGroup>
+
+<Note>
+  This function respects:
+  - Business hours and schedule exceptions
+  - Minimum booking time (can't book too close to current time)
+  - Existing reservations and active orders
+  - Tables that allow reservations
+</Note>
+
+---
+
+## Reservation Settings
+
+### getReservationSettings
+
+Gets current reservation settings from cache.
+
+```typescript
+export const getReservationSettings = (): ReservationSettings
+```
+
+<ResponseField name="settings" type="ReservationSettings">
+  Current reservation configuration
+</ResponseField>
+
+---
+
+### fetchAndCacheReservationSettings
+
+Fetches settings from Firebase.
+
+```typescript
+export const fetchAndCacheReservationSettings = async (): Promise<ReservationSettings>
+```
+
+---
+
+### saveReservationSettings
+
+Updates reservation settings.
+
+```typescript
+export const saveReservationSettings = async (settings: ReservationSettings): Promise<void>
+```
+
+<ParamField path="settings" type="ReservationSettings" required>
+  <Expandable title="properties">
+    <ParamField path="duration" type="number" required>
+      Reservation duration in minutes (default: 90)
+    </ParamField>
+    
+    <ParamField path="minBookingTime" type="number" required>
+      Minimum advance booking time in minutes (default: 60)
+    </ParamField>
+    
+    <ParamField path="initialBlockTime" type="number" required>
+      Minutes before reservation to block table (default: 60)
+    </ParamField>
+    
+    <ParamField path="extensionBlockTime" type="number" required>
+      Additional blocking time in minutes (default: 30)
+    </ParamField>
+    
+    <ParamField path="modificationLockTime" type="number" required>
+      Minutes before reservation when modifications are locked (default: 60)
+    </ParamField>
+    
+    <ParamField path="slotInterval" type="number" required>
+      Time slot interval in minutes (default: 30)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<CodeGroup>
+```typescript Usage
+import { saveReservationSettings } from './services/reservationService';
+
+await saveReservationSettings({
+  duration: 120,
+  minBookingTime: 90,
+  initialBlockTime: 60,
+  extensionBlockTime: 30,
+  modificationLockTime: 60,
+  slotInterval: 30
+});
+```
+</CodeGroup>
+
+---
+
+## TypeScript Types
+
+### ReservationStatus Enum
+
+```typescript
+enum ReservationStatus {
+  PENDING = 'Pendiente',
+  CONFIRMED = 'Confirmada',
+  SEATED = 'Sentado',
+  COMPLETED = 'Completada',
+  CANCELLED = 'Cancelada',
+  NO_SHOW = 'No Se Presentó'
+}
+```
+
+### ReservationCancellationReason Enum
+
+```typescript
+enum ReservationCancellationReason {
+  USER = 'Cancelado por el cliente',
+  ADMIN = 'Cancelado por el local',
+  SYSTEM = 'Cancelado por el sistema'
+}
+```
+
+### Reservation Interface
+
+```typescript
+interface Reservation {
+  id: string;
+  customerName: string;
+  customerPhone?: string;
+  guests: number;
+  reservationTime: string; // ISO timestamp
+  tableIds: string[];
+  status: ReservationStatus;
+  statusHistory: StatusHistory[];
+  finishedAt: string | null;
+  cancellationReason?: ReservationCancellationReason;
+  notes?: string;
+  createdAt: string;
+  orderId?: string;
+  createdBy: CreatedBy;
+}
+```
+
+### ReservationSettings Interface
+
+```typescript
+interface ReservationSettings {
+  duration: number; // minutes
+  minBookingTime: number; // minutes
+  initialBlockTime: number; // minutes
+  extensionBlockTime: number; // minutes
+  modificationLockTime: number; // minutes
+  slotInterval: number; // minutes
+}
+```
+
+---
+
+## Workflow Example
+
+### Complete Reservation Flow
+
+```typescript
+import { 
+  getAvailability,
+  findAvailableTables,
+  addReservation,
+  updateReservationStatus,
+  ReservationStatus,
+  CreatedBy
+} from './services/reservationService';
+
+// 1. Check availability
+const date = new Date('2024-03-10');
+const guests = 4;
+const availableSlots = getAvailability(date, guests);
+
+if (availableSlots.length === 0) {
+  console.log('No availability for that date');
+  return;
+}
+
+// 2. Find tables for chosen time
+const chosenTime = new Date(`2024-03-10T${availableSlots[0]}:00`);
+const tableIds = findAvailableTables(chosenTime, guests);
+
+if (!tableIds) {
+  console.log('Tables no longer available');
+  return;
+}
+
+// 3. Create reservation
+const reservation = await addReservation({
+  customerName: "Carlos Ruiz",
+  customerPhone: "+5491156789012",
+  guests,
+  reservationTime: chosenTime.toISOString(),
+  tableIds,
+  createdBy: CreatedBy.WEB_ASSISTANT
+});
+
+// 4. Confirm reservation
+await updateReservationStatus(
+  reservation.id,
+  ReservationStatus.CONFIRMED
+);
+
+console.log('Reservation confirmed:', reservation.id);
+```

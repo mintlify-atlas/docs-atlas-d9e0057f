@@ -1,0 +1,429 @@
+---
+title: Products API
+description: Product and category management functions for menu items
+icon: "pizza-slice"
+---
+
+## Overview
+
+The Products API manages menu items and their categories, including pricing, descriptions, and bulk operations. It implements a cache-first architecture with Firebase sync.
+
+## Product Management
+
+### getProductsFromCache
+
+Retrieves products from the in-memory cache synchronously.
+
+```typescript
+export const getProductsFromCache = (): Product[] => Product[]
+```
+
+<ParamField path="returns" type="Product[]">
+  Array of cached products
+</ParamField>
+
+**Returns immediately** - No async operation, uses in-memory cache.
+
+<CodeGroup>
+```typescript Usage
+import { getProductsFromCache } from './services/productService';
+
+const products = getProductsFromCache();
+console.log(`Found ${products.length} products`);
+```
+
+```typescript Response
+[
+  {
+    id: "PROD-1709876543210-abc123",
+    category: "Pizzas",
+    name: "Muzzarella",
+    description: "Muzzarella, salsa, oregano, y aceitunas verdes",
+    price: "9200"
+  }
+]
+```
+</CodeGroup>
+
+---
+
+### fetchAndCacheProducts
+
+Fetches products from Firebase and updates all caches.
+
+```typescript
+export const fetchAndCacheProducts = async (): Promise<Product[]>
+```
+
+<ResponseField name="products" type="Product[]">
+  Array of all products from Firebase
+</ResponseField>
+
+**Behavior:**
+- Fetches from Firebase Firestore `Products` collection
+- Updates in-memory and localStorage caches
+- If Firebase is empty but local cache exists, seeds Firebase from local data
+- Falls back to cache on network errors
+
+<CodeGroup>
+```typescript Usage
+import { fetchAndCacheProducts } from './services/productService';
+
+try {
+  const products = await fetchAndCacheProducts();
+  console.log('Products synced:', products.length);
+} catch (error) {
+  console.error('Sync failed:', error);
+}
+```
+</CodeGroup>
+
+---
+
+### addProduct
+
+Creates a new product and saves it to Firebase.
+
+```typescript
+export const addProduct = async (
+  productData: Omit<Product, 'id'>
+): Promise<Product>
+```
+
+<ParamField path="productData" type="object" required>
+  Product data without ID
+  
+  <Expandable title="properties">
+    <ParamField path="category" type="string" required>
+      Product category name
+    </ParamField>
+    <ParamField path="name" type="string" required>
+      Product name
+    </ParamField>
+    <ParamField path="description" type="string">
+      Product description or ingredients
+    </ParamField>
+    <ParamField path="price" type="string" required>
+      Price as string (e.g., "9200")
+    </ParamField>
+    <ParamField path="imageUrl" type="string">
+      Optional product image URL
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="product" type="Product">
+  The created product with generated ID
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { addProduct } from './services/productService';
+
+const newProduct = await addProduct({
+  category: "Pizzas",
+  name: "Napolitana",
+  description: "Muzzarella, salsa, ajies, orégano y aceitunas verdes",
+  price: "9700"
+});
+
+console.log('Created product:', newProduct.id);
+```
+
+```typescript Response
+{
+  id: "PROD-1709876543210-xyz789",
+  category: "Pizzas",
+  name: "Napolitana",
+  description: "Muzzarella, salsa, ajies, orégano y aceitunas verdes",
+  price: "9700"
+}
+```
+</CodeGroup>
+
+**Error Handling:**
+- Throws error with user-friendly message in Spanish on Firebase failures
+- Updates cache immediately on success
+
+---
+
+### updateProduct
+
+Updates an existing product.
+
+```typescript
+export const updateProduct = async (updatedProduct: Product): Promise<Product>
+```
+
+<ParamField path="updatedProduct" type="Product" required>
+  Complete product object with all fields including ID
+</ParamField>
+
+<ResponseField name="product" type="Product">
+  The updated product
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { updateProduct } from './services/productService';
+
+const updated = await updateProduct({
+  id: "PROD-1709876543210-xyz789",
+  category: "Pizzas",
+  name: "Napolitana Especial",
+  description: "Con extra queso",
+  price: "10500"
+});
+```
+</CodeGroup>
+
+---
+
+### deleteProduct
+
+Deletes a product by ID.
+
+```typescript
+export const deleteProduct = async (productId: string): Promise<void>
+```
+
+<ParamField path="productId" type="string" required>
+  The product ID to delete
+</ParamField>
+
+<CodeGroup>
+```typescript Usage
+import { deleteProduct } from './services/productService';
+
+await deleteProduct("PROD-1709876543210-xyz789");
+console.log('Product deleted');
+```
+</CodeGroup>
+
+---
+
+### adjustProductPrices
+
+Bulk price adjustment with rounding options.
+
+```typescript
+export const adjustProductPrices = async (
+  targetCategory: string,
+  percentage: number,
+  rounding: 'none' | 'integer' | '10' | '50' | '100'
+): Promise<void>
+```
+
+<ParamField path="targetCategory" type="string" required>
+  Category name or "all" for all products
+</ParamField>
+
+<ParamField path="percentage" type="number" required>
+  Percentage increase/decrease (e.g., 10 for +10%, -5 for -5%)
+</ParamField>
+
+<ParamField path="rounding" type="'none' | 'integer' | '10' | '50' | '100'" required>
+  Rounding strategy:
+  - `none` - No rounding (2 decimals)
+  - `integer` - Round to nearest integer
+  - `10` - Round to nearest 10
+  - `50` - Round to nearest 50
+  - `100` - Round to nearest 100
+</ParamField>
+
+<CodeGroup>
+```typescript Usage
+import { adjustProductPrices } from './services/productService';
+
+// Increase all pizza prices by 15%, round to nearest 50
+await adjustProductPrices("Pizzas", 15, "50");
+
+// Decrease all prices by 10%, round to integer
+await adjustProductPrices("all", -10, "integer");
+```
+</CodeGroup>
+
+**Implementation:**
+- Uses Firebase batch write for atomicity
+- Updates all matching products in single transaction
+- Price calculation: `newPrice = currentPrice * (1 + percentage/100)`
+
+---
+
+### importProducts
+
+Bulk import products from array.
+
+```typescript
+export const importProducts = async (
+  productsToImport: Omit<Product, 'id' | 'imageUrl'>[]
+): Promise<{ added: number; updated: number; errors: number }>
+```
+
+<ParamField path="productsToImport" type="array" required>
+  Array of product objects without ID or imageUrl
+</ParamField>
+
+<ResponseField name="result" type="object">
+  Import statistics
+  <Expandable title="properties">
+    <ResponseField name="added" type="number">
+      Number of new products created
+    </ResponseField>
+    <ResponseField name="updated" type="number">
+      Number of existing products updated
+    </ResponseField>
+    <ResponseField name="errors" type="number">
+      Number of products that failed validation
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<CodeGroup>
+```typescript Usage
+import { importProducts } from './services/productService';
+
+const result = await importProducts([
+  { name: "Pizza 1", category: "Pizzas", price: "9000" },
+  { name: "Pizza 2", category: "Pizzas", price: "9500" }
+]);
+
+console.log(`Added: ${result.added}, Updated: ${result.updated}, Errors: ${result.errors}`);
+```
+
+```typescript Response
+{
+  added: 1,
+  updated: 1,
+  errors: 0
+}
+```
+</CodeGroup>
+
+**Matching Logic:**
+- Products are matched by name (case-insensitive) and category
+- Existing products are updated, new ones are created
+- Validates required fields: name, category, price
+
+---
+
+## Category Management
+
+### getCategoriesFromCache
+
+Retrieves categories from in-memory cache.
+
+```typescript
+export const getCategoriesFromCache = (): Category[]
+```
+
+<ResponseField name="categories" type="Category[]">
+  Array of categories sorted alphabetically by name
+</ResponseField>
+
+---
+
+### fetchAndCacheCategories
+
+Fetches categories from Firebase and updates caches.
+
+```typescript
+export const fetchAndCacheCategories = async (): Promise<Category[]>
+```
+
+---
+
+### addCategory
+
+Creates a new product category.
+
+```typescript
+export const addCategory = async (
+  categoryData: Omit<Category, 'id'>
+): Promise<Category>
+```
+
+<ParamField path="categoryData" type="object" required>
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Category name
+    </ParamField>
+    <ParamField path="imageUrl" type="string">
+      Category image URL
+    </ParamField>
+    <ParamField path="color" type="string">
+      Hex color code (e.g., "#E53935")
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<CodeGroup>
+```typescript Usage
+import { addCategory } from './services/categoryService';
+
+const category = await addCategory({
+  name: "Bebidas",
+  imageUrl: "https://example.com/drinks.jpg",
+  color: "#2196F3"
+});
+```
+</CodeGroup>
+
+---
+
+### updateCategory
+
+Updates an existing category.
+
+```typescript
+export const updateCategory = async (updatedCategory: Category): Promise<Category>
+```
+
+---
+
+### deleteCategory
+
+Deletes a category by ID.
+
+```typescript
+export const deleteCategory = async (categoryId: string): Promise<void>
+```
+
+---
+
+## TypeScript Types
+
+### Product
+
+```typescript
+interface Product {
+  id: string;
+  category: string;
+  name: string;
+  description?: string;
+  price: string;
+  imageUrl?: string;
+}
+```
+
+### Category
+
+```typescript
+interface Category {
+  id: string;
+  name: string;
+  imageUrl?: string;
+  color?: string;
+}
+```
+
+### MenuItem
+
+```typescript
+interface MenuItem {
+  name: string;
+  price: string;
+  description?: string;
+  imageUrl?: string;
+}
+```

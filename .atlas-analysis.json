@@ -1,0 +1,106 @@
+{
+  "projectType": "saas",
+  "projectName": "Ai Studio",
+  "projectDescription": "AI-powered restaurant management platform with intelligent ordering, reservations, and multi-channel customer engagement.",
+  "theme": "almond",
+  "primaryColor": "#6acfdf",
+  "lightColor": "#e8f3f4",
+  "darkColor": "#0e0e0e",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/orders",
+              "features/reservations",
+              "features/menu-management",
+              "features/tables",
+              "features/customers",
+              "features/ai-assistants"
+            ]
+          },
+          {
+            "group": "Admin Dashboard",
+            "pages": [
+              "admin/dashboard-overview",
+              "admin/user-management",
+              "admin/analytics"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/whatsapp-bot",
+              "integrations/google-sheets",
+              "integrations/firebase"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/settings",
+              "configuration/schedule",
+              "configuration/notifications"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API",
+            "pages": [
+              "api/overview",
+              "api/products",
+              "api/orders",
+              "api/reservations",
+              "api/tables",
+              "api/customers",
+              "api/gemini"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "AI-powered chat assistant using Google Gemini",
+    "Intelligent order and reservation management",
+    "WhatsApp bot integration for customer engagement",
+    "Real-time table status tracking",
+    "Multi-channel communication (web, WhatsApp)",
+    "Admin dashboard with analytics and metrics",
+    "Customer categorization and history",
+    "Schedule management with exceptions",
+    "Firebase backend integration",
+    "Voice input and audio transcription"
+  ],
+  "publicApiSurface": [
+    "sendMessageToGemini",
+    "transcribeAudio",
+    "saveOrder",
+    "addReservation",
+    "getProducts",
+    "getCategories",
+    "getTables",
+    "getCustomers",
+    "isBusinessOpen",
+    "findAvailableTables",
+    "getSliceBotStatus",
+    "getWhatsAppBotStatus",
+    "getSliceBotMetrics",
+    "getWhatsAppBotMetrics"
+  ]
+}
